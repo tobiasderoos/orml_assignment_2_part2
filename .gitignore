@@ -1,0 +1,43 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- Virtual environment ---
+.venv/
+
+# --- Ruff ---
+.ruff_cache/
+
+# --- macOS junk ---
+.DS_Store
+._*
+.Icon?
+
+# --- Notebooks ---
+.ipynb_checkpoints/
+
+figures/
+plots/
+images/
+
+# --- Figures / Plots ---
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.gif
+*.pdf
+
+# Folders met data
+data/
+datasets/
+raw/
+processed/
+
+# --- Data bestanden---
+*.csv
+*.xlsx
+*.xls
+*.parquet
+
