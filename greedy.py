@@ -135,6 +135,72 @@ def solve_ilp(weights, profits, quad_profits, capacity):
 # ---------------------------------------------------------------------
 # Reduced Integer Linear Program (ILP) for the 0-1 QKP
 # ---------------------------------------------------------------------
+def solve_reduced_ilp_constraints(
+    weights, profits, quad_profits, capacity, selected
+):
+    """
+    Solve the reduced ILP for the 0-1 QKP using results from greedy.
+
+    Args:
+        weights: list w_i
+        profits: list p_i
+        quad_profits: matrix p_ij
+        capacity: knapsack capacity
+        selected: set of items chosen by greedy (S)
+
+    Returns:
+        model, x, y, objective_value
+    """
+
+    n = len(weights)
+    S = set(selected)  # set of selected items of greedy solution
+    R = [i for i in range(n) if i not in S]  # items not chosen by greedy
+
+    m = Model("QKP_reduced")
+
+    # Decision variables - create for ALL items
+    x = {}
+    for i in range(n):
+        x[i] = m.addVar(vtype=GRB.BINARY, name=f"x[{i}]")
+        # Fix variables for items in S using explicit constraints
+        if i in S:
+            m.addConstr(x[i] == 1, name=f"fix_x{i}")
+
+    y = {}
+    for i in range(n):
+        for j in range(i + 1, n):
+            y[i, j] = m.addVar(vtype=GRB.BINARY, name=f"y[{i},{j}]")
+
+    # Capacity constraint
+    m.addConstr(
+        sum(weights[i] * x[i] for i in range(n)) <= capacity,
+        name="capacity",
+    )
+
+    # Linking constraints: y_ij ≤ x_i, y_ij ≤ x_j
+    for i in range(n):
+        for j in range(i + 1, n):
+            m.addConstr(y[i, j] <= x[i], name=f"link_{i}_{j}_1")
+            m.addConstr(y[i, j] <= x[j], name=f"link_{i}_{j}_2")
+
+    # Objective = linear + quadratic terms
+    obj = sum(profits[i] * x[i] for i in range(n)) + sum(
+        quad_profits[i][j] * y[i, j] for i in range(n) for j in range(i + 1, n)
+    )
+    m.setObjective(obj, GRB.MAXIMIZE)
+    m.setParam("TimeLimit", 15)
+    m.optimize()
+
+    # Extract solution
+    objective_value = (
+        m.objVal
+        if m.status == GRB.OPTIMAL or m.status == GRB.TIME_LIMIT
+        else None
+    )
+
+    return m, x, objective_value
+
+
 def solve_reduced_ilp(weights, profits, quad_profits, capacity, selected):
     """
     Solve the reduced ILP for the 0-1 QPK using results from greedy.
@@ -166,7 +232,7 @@ def solve_reduced_ilp(weights, profits, quad_profits, capacity, selected):
     for i in range(n):
         for j in range(i + 1, n):
             y[i, j] = m.addVar(vtype=GRB.BINARY, name=f"y[{i},{j}]")
-            # Add constraint for pairs in S so that y_ij = 1 for pairs in S
+            # Add constraint for pairs in S so that y_ij = 1
             if i in S and j in S:
                 m.addConstr(y[i, j] == 1)
 
@@ -184,7 +250,7 @@ def solve_reduced_ilp(weights, profits, quad_profits, capacity, selected):
     for i in range(n):
         for j in range(i + 1, n):
             if i in S and j in S:
-                continue  # Already fixed
+                continue
             elif i in S and j in R:
                 m.addConstr(y[i, j] <= x[j])  # x[i] implicitly 1
             elif i in R and j in S:
@@ -215,11 +281,17 @@ def solve_reduced_ilp(weights, profits, quad_profits, capacity, selected):
 if __name__ == "__main__":
     # Configuration
     # - Load RL (placeholder)
-    instance_folder = "InstancesEx1_100/"
+    instance_folder = "InstancesEx1_200/"
     instance_files = [
         f for f in os.listdir(instance_folder) if f.endswith(".txt")
     ]
-    results = {"greedy": [], "ilp": [], "reduced_ilp": [], "rl": []}
+    results = {
+        "greedy": [],
+        "ilp": [],
+        "reduced_ilp": [],
+        "reduced_ilp_constraints": [],
+        "rl": [],
+    }
     for fname in instance_files:
         filepath = os.path.join(instance_folder, fname)
 
@@ -253,12 +325,19 @@ if __name__ == "__main__":
         # Run greedy with stopping criterion adn reduced ILP
         # ------------------------------------------------------
         S = greedy_qkp(weights, profits, quad, cap, stopping_criterion=30)
-        # Reduced ILP
+        # Reduced ILP without constraints
         m, x, objective_value = solve_reduced_ilp(
             weights, profits, quad, cap, S
         )
         selected_items = [i for i in x.keys() if x[i].x > 0.5] + list(S)
         results["reduced_ilp"].append(
+            (fname, len(selected_items), objective_value)
+        )
+        m, x, objective_value = solve_reduced_ilp_constraints(
+            weights, profits, quad, cap, S
+        )
+        selected_items = [i for i in range(n) if x[i].x > 0.5]
+        results["reduced_ilp_constraints"].append(
             (fname, len(selected_items), objective_value)
         )
         # ------------------------------------------------------
@@ -272,7 +351,7 @@ if __name__ == "__main__":
         greedy_profit = results["greedy"][i][2]
         ilp_len = results["ilp"][i][1]
         ilp_profit = results["ilp"][i][2]
-        # Print Greedy / RILP / ILP
+        # Print Greedy / RILP / RILP Constraints / ILP
         print(
-            f"{results['greedy'][i][2]} / {results['reduced_ilp'][i][2]} / {results['ilp'][i][2]}"
+            f"{results['greedy'][i][2]} / {results['reduced_ilp'][i][2]} / {results['reduced_ilp_constraints'][i][2]} {results['ilp'][i][2]}"
         )
