@@ -45,7 +45,7 @@ def greedy_qkp(
     remaining_capacity = capacity
     while remaining_capacity > 0:
         if stopping_criterion is not None:
-            if len(selected) == stopping_criterion:
+            if len(selected) >= stopping_criterion:
                 break
 
         # All feasible items that are less than remaining capacity
@@ -137,11 +137,11 @@ def solve_ilp(weights, profits, quad_profits, capacity):
 # ---------------------------------------------------------------------
 def solve_reduced_ilp(weights, profits, quad_profits, capacity, selected):
     """
-    Solve the reduced ILP for the 0-1 QPK.
+    Solve the reduced ILP for the 0-1 QPK using results from greedy.
 
     Args:
         weights: list w_i
-        profits: list p_i (= diagonal of p_ij)
+        profits: list p_i
         quad_profits: matrix p_ij
         capacity: knapsack capacity
         selected: set of items chosen by greedy (S)
@@ -151,29 +151,29 @@ def solve_reduced_ilp(weights, profits, quad_profits, capacity, selected):
     """
 
     n = len(weights)
-    S = set(selected)
-    R = [i for i in range(n) if i not in S]  # set excluding S
+    S = set(selected)  # set of selected items of greedy solution
+    R = [i for i in range(n) if i not in S]  # items not chosen by greedy
 
     m = Model("QKP_reduced")
 
     # Decision variables and added constraint where x_i = 1
+    # TODO: fix x_i = 1 for i in S using constraints
     x = {}
-    for i in range(n):
+    for i in R:
         x[i] = m.addVar(vtype=GRB.BINARY, name=f"x[{i}]")
-        if i in S:
-            # fixed variable
-            m.addConstr(x[i] == 1)
 
     y = {}
     for i in range(n):
         for j in range(i + 1, n):
             y[i, j] = m.addVar(vtype=GRB.BINARY, name=f"y[{i},{j}]")
-            # Add constraint for pairs in S
+            # Add constraint for pairs in S so that y_ij = 1 for pairs in S
             if i in S and j in S:
                 m.addConstr(y[i, j] == 1)
 
     # 4. Capacity constraint
-    weight_fixed = sum(weights[i] for i in S)
+    weight_fixed = sum(
+        weights[i] for i in S
+    )  # total weight of fixed items in S
 
     m.addConstr(
         weight_fixed + sum(weights[i] * x[i] for i in R) <= capacity,
@@ -184,26 +184,26 @@ def solve_reduced_ilp(weights, profits, quad_profits, capacity, selected):
     for i in range(n):
         for j in range(i + 1, n):
             if i in S and j in S:
-                continue
-            m.addConstr(y[i, j] <= x[i])
-            m.addConstr(y[i, j] <= x[j])
+                continue  # Already fixed
+            elif i in S and j in R:
+                m.addConstr(y[i, j] <= x[j])  # x[i] implicitly 1
+            elif i in R and j in S:
+                m.addConstr(y[i, j] <= x[i])  # x[j] implicitly 1
+            else:  # both in R
+                m.addConstr(y[i, j] <= x[i])
+                m.addConstr(y[i, j] <= x[j])
 
     # 6. Objective = linear + quadratic terms
-    # Add constant part from pairs inside S (already selected items)
-    constant_profit = sum(profits[i] for i in S) + sum(
-        quad_profits[i][j] for i in S for j in S if i < j
+    constant_profits = sum(profits[i] for i in S)
+    # constant profits from newly selected items
+    linear_profit = sum(profits[i] * x[i] for i in R)  # Variable part
+    quad_profit = sum(
+        quad_profits[i][j] * y[i, j] for i in range(n) for j in range(i + 1, n)
     )
-
-    obj = (
-        constant_profit
-        + sum(profits[i] * x[i] for i in R)
-        + sum(quad_profits[i][j] * y[i, j] for i in R for j in R if i < j)
-        + sum(quad_profits[i][j] * x[j] for i in S for j in R)
-    )
-
+    obj = constant_profits + linear_profit + quad_profit
+    m.update()
     m.setObjective(obj, GRB.MAXIMIZE)
     m.setParam("TimeLimit", 15)
-
     m.optimize()
 
     return m, x, m.objVal
@@ -215,7 +215,7 @@ def solve_reduced_ilp(weights, profits, quad_profits, capacity, selected):
 if __name__ == "__main__":
     # Configuration
     # - Load RL (placeholder)
-    instance_folder = "InstancesEx1/"
+    instance_folder = "InstancesEx1_100/"
     instance_files = [
         f for f in os.listdir(instance_folder) if f.endswith(".txt")
     ]
@@ -252,12 +252,12 @@ if __name__ == "__main__":
         # ------------------------------------------------------
         # Run greedy with stopping criterion adn reduced ILP
         # ------------------------------------------------------
-        S = greedy_qkp(weights, profits, quad, cap, stopping_criterion=5)
+        S = greedy_qkp(weights, profits, quad, cap, stopping_criterion=30)
         # Reduced ILP
         m, x, objective_value = solve_reduced_ilp(
             weights, profits, quad, cap, S
         )
-        selected_items = [i for i in range(n) if x[i].x > 0.5]
+        selected_items = [i for i in x.keys() if x[i].x > 0.5] + list(S)
         results["reduced_ilp"].append(
             (fname, len(selected_items), objective_value)
         )
@@ -272,6 +272,7 @@ if __name__ == "__main__":
         greedy_profit = results["greedy"][i][2]
         ilp_len = results["ilp"][i][1]
         ilp_profit = results["ilp"][i][2]
+        # Print Greedy / RILP / ILP
         print(
-            f"Instance: {fname} | Greedy: items={greedy_len}, profit={greedy_profit} | ILP: items={ilp_len}, profit={ilp_profit}, diff={ilp_profit - greedy_profit}"
+            f"{results['greedy'][i][2]} / {results['reduced_ilp'][i][2]} / {results['ilp'][i][2]}"
         )

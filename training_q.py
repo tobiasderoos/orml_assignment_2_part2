@@ -3,7 +3,7 @@ import pickle
 import numpy as np
 from gurobipy import Model, GRB
 
-from exc_1_greedy import (
+from greedy import (
     read_instance,
     greedy_qkp,
     solve_reduced_ilp,
@@ -32,9 +32,7 @@ class QLearning:
         self.n_states = 5
 
         # Q-table: states x actions
-        self.q_table = np.zeros(
-            (self.n_states, len(self.actions))
-        )
+        self.q_table = np.zeros((self.n_states, len(self.actions)))
 
         # Q-learning parameters
         self.alpha = 0.1  # Learning rate
@@ -76,9 +74,7 @@ class QLearning:
             # Exploit: best action
             return np.argmax(self.q_table[state])
 
-    def update_q_table(
-        self, state, action_idx, reward, next_state
-    ):
+    def update_q_table(self, state, action_idx, reward, next_state):
         """
         Q-learning update rule.
         """
@@ -86,14 +82,8 @@ class QLearning:
         current_q = self.q_table[state, action_idx]
 
         # Q(s,a) = Q(s,a) + α[r + γ max Q(s',a') - Q(s,a)]
-        self.q_table[state, action_idx] = (
-            current_q
-            + self.alpha
-            * (
-                reward
-                + self.gamma * best_next_action
-                - current_q
-            )
+        self.q_table[state, action_idx] = current_q + self.alpha * (
+            reward + self.gamma * best_next_action - current_q
         )
 
     def train(self, instance_folder, n_episodes=100):
@@ -101,9 +91,7 @@ class QLearning:
         Train the Q-learning agent on instances.
         """
         instance_files = [
-            f
-            for f in os.listdir(instance_folder)
-            if f.endswith(".txt")
+            f for f in os.listdir(instance_folder) if f.endswith(".txt")
         ]
 
         print(
@@ -116,9 +104,7 @@ class QLearning:
             filepath = os.path.join(instance_folder, fname)
 
             # Load instance
-            n, capacity, weights, quad = read_instance(
-                filepath
-            )
+            n, capacity, weights, quad = read_instance(filepath)
             profits = [quad[i][i] for i in range(n)]
 
             # Get state based on instance characteristics
@@ -149,9 +135,7 @@ class QLearning:
             reward = ilp_profit / 10000.0
 
             # Update Q-table
-            self.update_q_table(
-                state, action_idx, reward, next_state
-            )
+            self.update_q_table(state, action_idx, reward, next_state)
 
             # Decay epsilon
             self.epsilon = max(
@@ -178,9 +162,7 @@ class QLearning:
                     f"State {s}: Best k={self.actions[best_action_idx]} (explored {visits}/{len(self.actions)} actions)"
                 )
             else:
-                print(
-                    f"State {s}: Not visited during training"
-                )
+                print(f"State {s}: Not visited during training")
 
     def get_best_action(self, state):
         """
@@ -230,7 +212,5 @@ if __name__ == "__main__":
     agent.save("qlearning_model.pkl")
 
     print("\n" + "=" * 60)
-    print(
-        "Training complete! Model saved as 'qlearning_model.pkl'"
-    )
+    print("Training complete! Model saved as 'qlearning_model.pkl'")
     print("=" * 60)

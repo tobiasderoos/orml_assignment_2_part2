@@ -22,3 +22,21 @@ Possible: interpolate between actions?
 - gamma
 - epsilon
 - decay
+
+# Exc 2 
+
+decides which item to insert next into the knapsack. Unlike Exercise 1, the agent here directly selects one
+item (from a set) to add, rather than choosing a heuristic move
+
+## States
+
+- A high reward if the optimum value is high.
+- Negative reward if no solution is found
+- negative reward if time limit is reached. 
+
+## Actions
+
+items to pick 
+
+## Rewards
+
