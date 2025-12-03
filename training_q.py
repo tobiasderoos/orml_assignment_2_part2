@@ -294,6 +294,6 @@ if __name__ == "__main__":
     agent._save("qlearning_model.pkl")
     agent._save_params("qlearning_params.yaml", current_episode=100)
 
-    print("\n" + "=" * 60)
-    print("Training complete! Model saved as 'qlearning_model.pkl'")
-    print("=" * 60)
+    print("\n" + "-" * 60)
+    print("Training complete - Model saved as 'qlearning_model.pkl'")
+    print("-" * 60)

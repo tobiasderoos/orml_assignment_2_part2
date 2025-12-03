@@ -9,32 +9,33 @@ def compute_frac_high_state(weights, profits):
         ratio_bin = 1
     else:
         ratio_bin = 2
+
     return ratio_bin
 
 
-def compute_capacity_tightness_state(weights, capacity):
-    n = len(weights)
-    avg_weight = sum(weights) / n
+# def compute_capacity_tightness_state(weights, capacity):
+#     n = len(weights)
+#     avg_weight = sum(weights) / n
 
-    theoretical_capacity = capacity / avg_weight
+#     theoretical_capacity = capacity / avg_weight
 
-    if theoretical_capacity < 86:
-        tight_bin = 0
-    elif theoretical_capacity < 93:
-        tight_bin = 1
-    elif theoretical_capacity < 99:
-        tight_bin = 2
-    elif theoretical_capacity < 107:
-        tight_bin = 3
-    else:
-        tight_bin = 4
-    return tight_bin
+#     if theoretical_capacity < 86:
+#         tight_bin = 0
+#     elif theoretical_capacity < 93:
+#         tight_bin = 1
+#     elif theoretical_capacity < 99:
+#         tight_bin = 2
+#     elif theoretical_capacity < 107:
+#         tight_bin = 3
+#     else:
+#         tight_bin = 4
+#     return tight_bin
 
 
-def compute_state_id(weights, profits, capacity):
-    frac_high_state = compute_frac_high_state(weights, profits)
-    tight_state = compute_capacity_tightness_state(weights, capacity)
-    return frac_high_state * 5 + tight_state
+# def compute_state_id(weights, profits, capacity):
+#     frac_high_state = compute_frac_high_state(weights, profits)
+#     tight_state = compute_capacity_tightness_state(weights, capacity)
+#     return frac_high_state * 5 + tight_state
 
 
 # ---------------------------------------------
