@@ -41,6 +41,30 @@ class QLearning:
         self.epsilon_decay = 0.995
         self.epsilon_min = 0.05
 
+    def interpolate_q_between_actions(self, n_items):
+        """
+        Linearly interpolates q values between actions ()
+
+        Args:
+            n_items (_type_): _description_
+        """
+        q_values = np.zeros(n_items + 1)
+        for i in range(n_items + 1):
+            if i <= self.actions[0]:
+                q_values[i] = self.q_table[:, 0].mean()
+            elif i >= self.actions[-1]:
+                q_values[i] = self.q_table[:, -1].mean()
+            else:
+                for j in range(len(self.actions) - 1):
+                    if self.actions[j] < i <= self.actions[j + 1]:
+                        # Linear interpolation
+                        x0, x1 = self.actions[j], self.actions[j + 1]
+                        y0 = self.q_table[:, j].mean()
+                        y1 = self.q_table[:, j + 1].mean()
+                        q_values[i] = y0 + (y1 - y0) * (i - x0) / (x1 - x0)
+                        break
+        return q_values
+
     def get_state(self, weights, capacity):
         """
         Map instance characteristics to a discrete state.

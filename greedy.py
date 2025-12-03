@@ -17,38 +17,44 @@ def read_instance(filename):
     return n, c, w, p
 
 
-# ---------------------------------------------------------------------
-# Greedy heuristic
-# ---------------------------------------------------------------------
 def greedy_qkp(
     weights,
     profits,
-    quad_profits,
     capacity,
     stopping_criterion=None,
 ):
     """
-    Greedy heuristic for the 0-1 Quadratic Knapsack Problem.
+    Greedy heuristic for the 0-1 Quadratic Knapsack Problem (QKP),
+    but using only linear profits for item selection.
+
+    Items are added one‐by‐one based on their linear profit-to-weight ratio
+    until the capacity is full or an optional stopping threshold is reached.
 
     Args:
-        weights: list of w_i
-        profits: list of p_i
-        quad_profits: matrix p_ij (size n x n)
-        capacity: knapsack capacity c
-        stopping_criterion: function S -> bool (optional)
+        weights (list): List of item weights w_i.
+        profits (list): List of linear profits p_i.
+        capacity (int): Knapsack capacity C.
+        stopping_criterion (int, optional):
+            Maximum number of greedy items to select before stopping
+            (e.g. stop after selecting S items).
+            If None, greedy runs until no more items fit.
 
     Returns:
-        selected: set of chosen items
+        set: A set of selected item indices.
     """
     n = len(weights)
     selected = set()
     remaining_capacity = capacity
-    while remaining_capacity > 0:
-        if stopping_criterion is not None:
-            if len(selected) >= stopping_criterion:
-                break
 
-        # All feasible items that are less than remaining capacity
+    while remaining_capacity > 0:
+        # --- optional stopping rule (select at most S greedy items) ---
+        if (
+            stopping_criterion is not None
+            and len(selected) >= stopping_criterion
+        ):
+            break
+
+        # feasible items that still fit
         candidates = [
             i
             for i in range(n)
@@ -58,22 +64,10 @@ def greedy_qkp(
         if not candidates:
             break
 
-        # Compute marginal profit ratio for each candidate
-        best_item = None
-        best_ratio = -1
+        # choose item with best linear profit-to-weight ratio
+        best_item = max(candidates, key=lambda i: profits[i] / weights[i])
 
-        for i in candidates:
-            # Marginal profit: linear + interactions with already selected items / weight
-            profits_i = profits[i]
-            int_profits_ij = sum(quad_profits[i][j] for j in selected)
-            marginal_profit = profits_i + int_profits_ij
-            ratio = marginal_profit / weights[i]
-
-            if ratio > best_ratio:
-                best_ratio = ratio
-                best_item = i
-
-        # Add the item to the knapsack
+        # select item
         selected.add(best_item)
         remaining_capacity -= weights[best_item]
 
@@ -127,80 +121,21 @@ def solve_ilp(weights, profits, quad_profits, capacity):
         quad_profits[i][j] * y[i, j] for i in range(n) for j in range(i + 1, n)
     )
     m.setObjective(obj, GRB.MAXIMIZE)
+    m.update()
+
     m.setParam("TimeLimit", 15)
     m.optimize()
-    return m, x, m.objVal
+    x_updated = {}
+    for i in range(n):
+        x_updated[i] = x[i].X
+
+    obj = m.objVal if m.status in [GRB.OPTIMAL, GRB.TIME_LIMIT] else None
+    return obj, x_updated, m.status
 
 
 # ---------------------------------------------------------------------
 # Reduced Integer Linear Program (ILP) for the 0-1 QKP
 # ---------------------------------------------------------------------
-def solve_reduced_ilp_constraints(
-    weights, profits, quad_profits, capacity, selected
-):
-    """
-    Solve the reduced ILP for the 0-1 QKP using results from greedy.
-
-    Args:
-        weights: list w_i
-        profits: list p_i
-        quad_profits: matrix p_ij
-        capacity: knapsack capacity
-        selected: set of items chosen by greedy (S)
-
-    Returns:
-        model, x, y, objective_value
-    """
-
-    n = len(weights)
-    S = set(selected)  # set of selected items of greedy solution
-    R = [i for i in range(n) if i not in S]  # items not chosen by greedy
-
-    m = Model("QKP_reduced")
-
-    # Decision variables - create for ALL items
-    x = {}
-    for i in range(n):
-        x[i] = m.addVar(vtype=GRB.BINARY, name=f"x[{i}]")
-        # Fix variables for items in S using explicit constraints
-        if i in S:
-            m.addConstr(x[i] == 1, name=f"fix_x{i}")
-
-    y = {}
-    for i in range(n):
-        for j in range(i + 1, n):
-            y[i, j] = m.addVar(vtype=GRB.BINARY, name=f"y[{i},{j}]")
-
-    # Capacity constraint
-    m.addConstr(
-        sum(weights[i] * x[i] for i in range(n)) <= capacity,
-        name="capacity",
-    )
-
-    # Linking constraints: y_ij ≤ x_i, y_ij ≤ x_j
-    for i in range(n):
-        for j in range(i + 1, n):
-            m.addConstr(y[i, j] <= x[i], name=f"link_{i}_{j}_1")
-            m.addConstr(y[i, j] <= x[j], name=f"link_{i}_{j}_2")
-
-    # Objective = linear + quadratic terms
-    obj = sum(profits[i] * x[i] for i in range(n)) + sum(
-        quad_profits[i][j] * y[i, j] for i in range(n) for j in range(i + 1, n)
-    )
-    m.setObjective(obj, GRB.MAXIMIZE)
-    m.setParam("TimeLimit", 15)
-    m.optimize()
-
-    # Extract solution
-    objective_value = (
-        m.objVal
-        if m.status == GRB.OPTIMAL or m.status == GRB.TIME_LIMIT
-        else None
-    )
-
-    return m, x, objective_value
-
-
 def solve_reduced_ilp(weights, profits, quad_profits, capacity, selected):
     """
     Solve the reduced ILP for the 0-1 QPK using results from greedy.
@@ -271,17 +206,20 @@ def solve_reduced_ilp(weights, profits, quad_profits, capacity, selected):
     m.setObjective(obj, GRB.MAXIMIZE)
     m.setParam("TimeLimit", 15)
     m.optimize()
-
-    return m, x, m.objVal
+    x_updated = {}
+    for i in R:
+        x_updated[i] = x[i].X
+    obj = m.objVal if m.status in [GRB.OPTIMAL, GRB.TIME_LIMIT] else None
+    return obj, x_updated, m.status
 
 
 # ---------------------------------------------------------------------
-# Main execution
+# Run script to compare greedy, ILP, reduced ILP, and RL
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
     # Configuration
     # - Load RL (placeholder)
-    instance_folder = "InstancesEx1_200/"
+    instance_folder = "InstancesEx1/"
     instance_files = [
         f for f in os.listdir(instance_folder) if f.endswith(".txt")
     ]
@@ -289,7 +227,6 @@ if __name__ == "__main__":
         "greedy": [],
         "ilp": [],
         "reduced_ilp": [],
-        "reduced_ilp_constraints": [],
         "rl": [],
     }
     for fname in instance_files:
@@ -303,55 +240,51 @@ if __name__ == "__main__":
         # ------------------------------------------------------
         # Run greedy
         # ------------------------------------------------------
-        S = greedy_qkp(
+        S_greedy = greedy_qkp(
             weights,
             profits,
-            quad,
             cap,
             stopping_criterion=None,
         )
 
         # Compute profit
-        profit_greedy = compute_profit(S, profits, quad)
-        results["greedy"].append((fname, len(S), profit_greedy))
+        profit_greedy = compute_profit(S_greedy, profits, quad)
+        results["greedy"].append((fname, len(S_greedy), profit_greedy))
         # ------------------------------------------------------
         # Run full ILP
         # ------------------------------------------------------
-        m, x, objective_value = solve_ilp(weights, profits, quad, cap)
-        selected_items = [i for i in range(n) if x[i].x > 0.5]
-        results["ilp"].append((fname, len(selected_items), objective_value))
+        ilp_obj_val, x_ilp, res_ilp = solve_ilp(weights, profits, quad, cap)
+        selected_items = [i for i in range(n) if x_ilp[i] > 0.5]
+        results["ilp"].append((fname, len(selected_items), ilp_obj_val))
 
         # ------------------------------------------------------
-        # Run greedy with stopping criterion adn reduced ILP
+        # Run greedy with stopping criterion and reduced ILP
         # ------------------------------------------------------
-        S = greedy_qkp(weights, profits, quad, cap, stopping_criterion=30)
+        S_greedy_stop = greedy_qkp(weights, profits, cap, stopping_criterion=30)
         # Reduced ILP without constraints
-        m, x, objective_value = solve_reduced_ilp(
-            weights, profits, quad, cap, S
+
+        rilp_obj_val, x_rilp, result = solve_reduced_ilp(
+            weights, profits, quad, cap, S_greedy_stop
         )
-        selected_items = [i for i in x.keys() if x[i].x > 0.5] + list(S)
+        selected_items = [i for i in x_rilp.keys() if x_rilp[i] > 0.5] + list(
+            S_greedy_stop
+        )
+
         results["reduced_ilp"].append(
-            (fname, len(selected_items), objective_value)
-        )
-        m, x, objective_value = solve_reduced_ilp_constraints(
-            weights, profits, quad, cap, S
-        )
-        selected_items = [i for i in range(n) if x[i].x > 0.5]
-        results["reduced_ilp_constraints"].append(
-            (fname, len(selected_items), objective_value)
+            (fname, len(selected_items), rilp_obj_val)
         )
         # ------------------------------------------------------
         # Placeholder for RL results (to be filled in after training)
         # ------------------------------------------------------
+# Print results relative to full ILP
+for i in range(len(instance_files)):
+    greedy_profit = results["greedy"][i][2]
+    rilp_profit = results["reduced_ilp"][i][2]
+    ilp_profit = results["ilp"][i][2]  # full ILP = 100%
 
-    # Print results
-    for i in range(len(instance_files)):
-        fname = instance_files[i]
-        greedy_len = results["greedy"][i][1]
-        greedy_profit = results["greedy"][i][2]
-        ilp_len = results["ilp"][i][1]
-        ilp_profit = results["ilp"][i][2]
-        # Print Greedy / RILP / RILP Constraints / ILP
-        print(
-            f"{results['greedy'][i][2]} / {results['reduced_ilp'][i][2]} / {results['reduced_ilp_constraints'][i][2]} {results['ilp'][i][2]}"
-        )
+    greedy_rel = 100 * greedy_profit / ilp_profit
+    rilp_rel = 100 * rilp_profit / ilp_profit
+
+    print(
+        f"Greedy: {greedy_rel:6.2f}%   RILP: {rilp_rel:6.2f}%   Full ILP: 100.00%"
+    )
