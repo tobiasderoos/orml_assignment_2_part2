@@ -98,6 +98,7 @@ def solve_ilp(weights, profits, quad_profits, capacity):
     """
     n = len(weights)
     m = Model("QKP_full")
+    m.setParam("OutputFlag", 0)
     # Decision variables
     x = {}
     for i in range(n):
@@ -156,7 +157,7 @@ def solve_reduced_ilp(weights, profits, quad_profits, capacity, selected):
     R = [i for i in range(n) if i not in S]  # items not chosen by greedy
 
     m = Model("QKP_reduced")
-
+    m.setParam("OutputFlag", 0)
     # Decision variables and added constraint where x_i = 1
     # TODO: fix x_i = 1 for i in S using constraints
     x = {}

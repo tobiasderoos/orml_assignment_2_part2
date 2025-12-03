@@ -1,97 +1,99 @@
 # RL Hyper-Heuristic for Greedy–ILP Threshold Selection
 
-This module applies **Q-learning** to automatically determine how many items should be selected by the greedy heuristic before switching to the ILP solver in the Quadratic Knapsack Problem (QKP).  
-The goal is to learn an adaptive stopping criterion that increases solution quality while reducing ILP computation time.
+This module applies **Q-learning** to determine how many items the greedy heuristic should select before switching to the ILP solver in the Quadratic Knapsack Problem (QKP).  
+The goal is to learn an **adaptive stopping criterion** that improves solution quality while keeping ILP computation time low.
+
+The agent makes **only one decision** per episode:  
+select the greedy threshold \(k\) at the start, based on the observed instance characteristics.  
+After this decision, the greedy phase and ILP phase run automatically.
 
 ---
 
 ## States
 
-The state represents coarse instance characteristics that correlate with the optimal stopping threshold.
+The state represents coarse instance characteristics that influence the optimal stopping threshold.
 
 ### Current implementation
-- Compute average item weight.
-- Compute theoretical capacity:
+
+### Theoretical capacity
+- Compute the average item weight.
+- Compute the theoretical capacity:
   \[
   T = \frac{W}{\bar{w}}
   \]
-- Discretize \(T\) into 5 buckets  
-  (ensures balanced training across states)
+- Discretize \(T\) into 5 buckets to ensure balanced visitation during training.
 
-**Interpretation:**  
-A larger knapsack → more items fit → a higher greedy threshold is typically more effective.
+A larger theoretical capacity implies that more items can fit in the knapsack, so a **larger greedy threshold** is often beneficial.
 
-### Possible improvements
-- Include **profit-weight ratio statistics** (mean, variance).
-- Add interaction variability . more variability between interactions -> ILP should intervene sooner
+### Quadratic interaction characteristic
+
+\[
+\bar{q} = \frac{1}{n(n-1)} \sum_{i < j} q_{ij}
+\]
+
+This value reflects how important item–item complementarities are in the objective.
+
+- **Low interaction:** greedy can select more items before ILP takes over.  
+- **High interaction:** greedy should stop earlier so ILP can optimize the quadratic structure.
+
+---
+
 ## Actions
 
-Actions correspond to the number of greedy selections before switching to ILP:
+Actions specify the number of greedy selections before switching to ILP: {5, 10, 15 ... 100}
+
 
 ### Rationale
-- Reduces computational complexity.
-- Covers the practical range for threshold values.
+- Using increments of **5** significantly reduces computational cost, and accelerates convergence.
+- These thresholds still cover the full practical range of early vs. late ILP intervention.
 
-### Optional: Interpolation
-To avoid evaluating unlisted thresholds (e.g., 6–9),  
-Q-values can be **linearly interpolated** between adjacent actions.
+May. not result in best thrshols selection.
 
 ---
 
 ## Rewards
 
-Rewards measure the quality of the solution produced by the combination of greedy + ILP.
+Rewards evaluate the quality of the combined greedy + ILP solution.
 
-### Current reward logic
-- High reward when ILP returns a high objective value.
-- Negative reward when:
-  - ILP finds no feasible solution.
-  - ILP reaches the time limit.
+### Reward scaling
+Rewards are normalized using full ILP solution and Greedy-Only soluiton:
+- **Full ILP solution** → reward = 1  
+- **Greedy-only solution** → reward = 0  
+- **Reduced ILP solution (RILP)** → reward in (0, 1): RILP / (full_ILP - Greedy)
 
-### Recommended improvements
-#### **1. Normalize reward using the full ILP optimum**
-Instead of dividing by a constant (e.g., 10,000), use:
+### Negative reward
+Negative rewards are assigned when:
+- ILP finds **no feasible solution** --> negative reward 2
 
-\[
-r = \frac{\text{reduced ILP solution}}{\text{full ILP optimal solution}}
-\]
+### Timing reward / penalty
 
-Reward ∈ [0, 1], stable and comparable across instances.
+Because a faster ILP solve is preferable, reward incorporates a small penalty for runtime:
 
-#### **2. Time-penalized reward**
-Include computational cost:
+The closer to 15 secondds, the better. Greedy heuristic is baseline, 15 seconds is upper limit. 
 
-\[
-r = \alpha \cdot \text{solution quality} - \beta \cdot \text{time}
-\]
-
-(where α and β are tunable)
-
-#### **3. Reward shaping**
-To avoid flat reward landscapes:
-- small intermediate reward for greedy phase quality  
-- penalty if greedy fills knapsack too early (no room left for ILP improvement)
+### Goal
+Reward solutions that are:
+- close to the full ILP optimum,
+- found within the time limit,
+- produced using an appropriate greedy–ILP split.
 
 ---
 
 ## Q-Learning Parameters
 
 - **α (alpha)** – learning rate  
-- **ε (epsilon)** – exploration rate  
-- **ε-decay** – decays exploration over training  
-- Effective update rule:  
-    \[
-    Q(s,a) \leftarrow Q(s,a) + \alpha (r - Q(s,a))
-    \]
+- **ε (epsilon)** – exploration probability  
+- **ε-decay** – gradually reduces exploration  
+- No discount factor γ is needed, as each episode consists of a **single decision**.
 
----
+### Effective update rule
+Since the problem is a contextual bandit, the Q-update simplifies to:
 
-## Additional Improvement Ideas
+\[
+Q(s,a) \leftarrow Q(s,a) + \alpha \big( r - Q(s,a) \big)
+\]
 
-### **1. Use a value baseline**
-Reward = ILP solution − greedy-only solution  
-This isolates the improvement caused by ILP.
-
+This update moves Q(s, a) toward the observed reward, learning the expected performance of each threshold under different instance characteristics.
 
 
 # Exc 2 

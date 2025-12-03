@@ -14,12 +14,12 @@ from greedy import (
 # RUN STOPPING CRITERION EXPERIMENT ON ALL INSTANCES
 # ---------------------------------------------------------------------
 
-instance_folder = "InstancesEx1/"
+instance_folder = f"InstancesEx1/"
 instance_files = sorted(
     [f for f in os.listdir(instance_folder) if f.endswith(".txt")]
 )
 
-all_gaps = []  # list of lists: gaps[S] across instances
+all_gaps = []
 max_S_global = 0
 
 for fname in instance_files:
@@ -61,7 +61,6 @@ mean_gaps = gaps_matrix.mean(axis=0)
 std_gaps = gaps_matrix.std(axis=0)
 S_values = np.arange(0, max_S_global + 1)
 
-
 # ---------------------------------------------------------------------
 # Plot results
 # ---------------------------------------------------------------------
@@ -81,5 +80,5 @@ plt.xlabel("Stopping criterion items selected (S)")
 plt.ylabel("Optimality gap (%)")
 plt.grid()
 plt.legend()
-plt.savefig("plots/stopping_criterion_experiment_50.png", dpi=300)
+plt.savefig(f"plots/stopping_criterion_experiment.png", dpi=300)
 plt.show()
