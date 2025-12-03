@@ -47,7 +47,6 @@ def greedy_qkp(
     remaining_capacity = capacity
 
     while remaining_capacity > 0:
-        # --- optional stopping rule (select at most S greedy items) ---
         if (
             stopping_criterion is not None
             and len(selected) >= stopping_criterion
