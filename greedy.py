@@ -276,15 +276,15 @@ if __name__ == "__main__":
         # ------------------------------------------------------
         # Placeholder for RL results (to be filled in after training)
         # ------------------------------------------------------
-# Print results relative to full ILP
-for i in range(len(instance_files)):
-    greedy_profit = results["greedy"][i][2]
-    rilp_profit = results["reduced_ilp"][i][2]
-    ilp_profit = results["ilp"][i][2]  # full ILP = 100%
+    # Print results relative to full ILP
+    for i in range(len(instance_files)):
+        greedy_profit = results["greedy"][i][2]
+        rilp_profit = results["reduced_ilp"][i][2]
+        ilp_profit = results["ilp"][i][2]  # full ILP = 100%
 
-    greedy_rel = 100 * greedy_profit / ilp_profit
-    rilp_rel = 100 * rilp_profit / ilp_profit
+        greedy_rel = 100 * greedy_profit / ilp_profit
+        rilp_rel = 100 * rilp_profit / ilp_profit
 
-    print(
-        f"Greedy: {greedy_rel:6.2f}%   RILP: {rilp_rel:6.2f}%   Full ILP: 100.00%"
-    )
+        print(
+            f"Greedy: {greedy_rel:6.2f}%   RILP: {rilp_rel:6.2f}%   Full ILP: 100.00%"
+        )
