@@ -26,7 +26,8 @@ class QLearning:
     Reward:  Normalized quality of reduced ILP solution
     """
 
-    def __init__(self, n_items=200):
+    def __init__(self, instance_folder):
+        self.instance_folder = instance_folder
         # Actions: stopping criterion values (number of items to select in greedy)
         # Here: 5, 10, ..., 95
         self.actions = list(range(15, 120, 15))
@@ -201,9 +202,9 @@ class QLearning:
         return 0.0
 
     # Training loop
-    def train(self, instance_folder, n_episodes=100):
+    def train(self, n_episodes=100):
         instance_files = [
-            f for f in os.listdir(instance_folder) if f.endswith(".txt")
+            f for f in os.listdir(self.instance_folder) if f.endswith(".txt")
         ]
 
         print(
@@ -285,10 +286,10 @@ class QLearning:
 if __name__ == "__main__":
     # Create and train the Q-learning agent
 
-    agent = QLearning(n_items=30)
+    agent = QLearning(instance_folder="InstancesEx1_200/")
 
     # Train on instances
-    agent.train("InstancesEx1_200/", n_episodes=100)
+    agent.train(n_episodes=100)
 
     # Save the trained model
     agent._save("qlearning_model.pkl")

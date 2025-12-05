@@ -1,5 +1,8 @@
 import os
 from gurobipy import Model, GRB
+import pickle
+from training_q import QLearning
+from tqdm import tqdm
 
 
 # ---------------------------------------------------------------------
@@ -158,7 +161,6 @@ def solve_reduced_ilp(weights, profits, quad_profits, capacity, selected):
     m = Model("QKP_reduced")
     m.setParam("OutputFlag", 0)
     # Decision variables and added constraint where x_i = 1
-    # TODO: fix x_i = 1 for i in S using constraints
     x = {}
     for i in R:
         x[i] = m.addVar(vtype=GRB.BINARY, name=f"x[{i}]")
@@ -213,13 +215,31 @@ def solve_reduced_ilp(weights, profits, quad_profits, capacity, selected):
     return obj, x_updated, m.status
 
 
+def solve_q(weights, profits, quad, capacity, fixed_items, q_table, state):
+    """
+    Solve reduced ILP using Q-table to fix items.
+
+    Args:
+        weights: list w_i
+        profits: list p_i
+        quad: matrix p_ij
+        capacity: knapsack capacity
+        fixed_items: set of items chosen by greedy (S)
+        q_table: Q-table for RL agent
+        state: current state for RL agent
+
+    Returns:
+        obj_val, x, status
+    """
+
+
 # ---------------------------------------------------------------------
 # Run script to compare greedy, ILP, reduced ILP, and RL
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
     # Configuration
     # - Load RL (placeholder)
-    instance_folder = "InstancesEx1/"
+    instance_folder = "InstancesEx1_200/"
     instance_files = [
         f for f in os.listdir(instance_folder) if f.endswith(".txt")
     ]
@@ -229,7 +249,18 @@ if __name__ == "__main__":
         "reduced_ilp": [],
         "rl": [],
     }
-    for fname in instance_files:
+
+    # initialize agent
+    with open("qlearning_model.pkl", "rb") as f:
+        model = pickle.load(f)  #
+    q_table = model["q_table"]
+    actions = model["actions"]
+    n_states = model["n_states"]
+
+    agent = QLearning()
+
+    # tqdm
+    for fname in tqdm(instance_files):
         filepath = os.path.join(instance_folder, fname)
 
         # Load instance
@@ -274,8 +305,27 @@ if __name__ == "__main__":
             (fname, len(selected_items), rilp_obj_val)
         )
         # ------------------------------------------------------
-        # Placeholder for RL results (to be filled in after training)
+        # Q
         # ------------------------------------------------------
+
+        state = agent.get_state(weights, profits)
+        action_idx = agent.choose_action(state)
+        stopping_criterion = actions[action_idx]
+        # greedy
+        S_greedy_stop = greedy_qkp(
+            weights,
+            profits,
+            cap,
+            stopping_criterion=stopping_criterion,
+        )
+        q_val, _, _ = solve_reduced_ilp(
+            weights, profits, quad, cap, S_greedy_stop
+        )
+        selected_items = [i for i in x_rilp.keys() if x_rilp[i] > 0.5] + list(
+            S_greedy_stop
+        )
+        results["rl"].append((fname, len(selected_items), q_val))
+
     # Print results relative to full ILP
     for i in range(len(instance_files)):
         greedy_profit = results["greedy"][i][2]
@@ -284,7 +334,7 @@ if __name__ == "__main__":
 
         greedy_rel = 100 * greedy_profit / ilp_profit
         rilp_rel = 100 * rilp_profit / ilp_profit
-
+        rl_rel = 100 * results["rl"][i][2] / ilp_profit
         print(
-            f"Greedy: {greedy_rel:6.2f}%   RILP: {rilp_rel:6.2f}%   Full ILP: 100.00%"
+            f"Greedy: {greedy_rel:6.2f}%   RILP: {rilp_rel:6.2f}%   RL: {rl_rel:6.2f}%  Full ILP: 100.00%"
         )
