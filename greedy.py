@@ -4,8 +4,6 @@ import pickle
 from tqdm import tqdm
 import time
 
-from training_q import QLearning
-
 
 # ---------------------------------------------------------------------
 # Read the instance
@@ -239,6 +237,8 @@ def solve_q(weights, profits, quad, capacity, fixed_items, q_table, state):
 # Run script to compare greedy, ILP, reduced ILP, and RL
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
+    from training_q import QLearning
+
     # Configuration
     # - Load RL (placeholder)
     instance_folder = "InstancesEx1/"
