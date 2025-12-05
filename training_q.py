@@ -2,7 +2,6 @@ import os
 import pickle
 import yaml
 import numpy as np
-import time
 import tqdm
 from gurobipy import GRB
 
@@ -113,10 +112,10 @@ class QLearning:
         ratios = [profits[i] / weights[i] for i in range(len(weights))]
         avg_ratio = sum(ratios) / len(ratios)
 
-        t1 = 2.168
-        t2 = 2.440
-        t3 = 2.712
-        t4 = 3.796
+        t1 = 2.23
+        t2 = 2.48
+        t3 = 3.77
+        t4 = 3.15
 
         if avg_ratio < t1:
             return 0
