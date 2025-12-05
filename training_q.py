@@ -3,13 +3,6 @@ import pickle
 import yaml
 import numpy as np
 import time
-from greedy import (
-    read_instance,
-    greedy_qkp,
-    compute_profit,
-    solve_reduced_ilp,
-    solve_ilp,
-)
 import tqdm
 from gurobipy import GRB
 
@@ -26,7 +19,8 @@ class QLearning:
     Reward:  Normalized quality of reduced ILP solution
     """
 
-    def __init__(self, instance_folder):
+    def __init__(self, instance_folder, reset_params=False):
+        self.reset_params = reset_params
         self.instance_folder = instance_folder
         # Actions: stopping criterion values (number of items to select in greedy)
         # Here: 5, 10, ..., 95
@@ -46,6 +40,9 @@ class QLearning:
 
         # Load
         self.load_if_exists()
+
+        # Reset
+
         # Caches
         self.full_ilp_cache = {}
         self.reduced_ilp_cache = {}
@@ -107,7 +104,8 @@ class QLearning:
         """Load Q-table + params if available."""
         if os.path.exists("qlearning_model.pkl"):
             self._load("qlearning_model.pkl")
-
+        if self.reset_params:
+            return
         if os.path.exists("qlearning_params.yaml"):
             self._load_params("qlearning_params.yaml")
 
@@ -213,13 +211,13 @@ class QLearning:
         # TQDM
         for episode in tqdm.tqdm(range(n_episodes)):
             fname = np.random.choice(instance_files)
-            filepath = os.path.join(instance_folder, fname)
+            filepath = os.path.join(self.instance_folder, fname)
 
             # Load instance
             n, capacity, weights, quad = read_instance(filepath)
             profits = [quad[i][i] for i in range(n)]
 
-            state = self.get_state(profits, weights)
+            state = self.get_state(weights, profits)
 
             action_idx = self.choose_action(state)
             stopping_criterion = self.actions[action_idx]
@@ -234,67 +232,36 @@ class QLearning:
             greedy_profit = compute_profit(selected_greedy, profits, quad)
 
             # Full ILP cached
-            ilp_obj_val, _, _ = self.solve_full_ilp_cache(
+            ilp_obj_val, x, status = self.solve_full_ilp_cache(
                 fname, weights, profits, quad, capacity
             )
 
-            # Reduced ILP
-            start = time.time()
-            rilp_obj_val, _, rilp_status = self.solve_rilp_cache(
-                fname,
-                weights,
-                profits,
-                quad,
-                capacity,
-                selected_greedy,
-                stopping_criterion,
-            )
-            end = time.time()
-
-            # Rewards and penalties
-            reward = self.compute_reward(
-                full_profit=ilp_obj_val,
-                greedy_profit=greedy_profit,
-                rilp_profit=rilp_obj_val,
-            )
-
-            reward += self.compute_time_penalty(end - start)
-            reward += self.compute_penalty_model_status(rilp_status)
-
-            self.update_q_table(state, action_idx, reward)
-
-            # Decay epsilon
-            self.epsilon = max(
-                self.epsilon_min,
-                self.epsilon * self.epsilon_decay,
-            )
-            # Store model every 10 episodes
-            if (episode + 1) % 10 == 0:
-                self._save("qlearning_model.pkl")
-                self._save_params(
-                    "qlearning_params.yaml", current_episode=episode + 1
-                )
-
-        print("\nTraining completed")
-        print("\nLearned Q-table:")
-        print(self.q_table)
+            print(status)
 
 
 # ---------------------------------------------------------------------
 # Main training
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
+    from greedy import (
+        read_instance,
+        greedy_qkp,
+        compute_profit,
+        solve_reduced_ilp,
+        solve_ilp,
+    )
+
     # Create and train the Q-learning agent
 
-    agent = QLearning(instance_folder="InstancesEx1_200/")
+    agent = QLearning(instance_folder="InstancesEx1_200/", reset_params=True)
 
     # Train on instances
     agent.train(n_episodes=100)
 
     # Save the trained model
-    agent._save("qlearning_model.pkl")
-    agent._save_params("qlearning_params.yaml", current_episode=100)
+    agent._save("qlearning_model_extra_train.pkl")
+    agent._save_params("qlearning_params_extra_train.yaml", current_episode=100)
 
     print("\n" + "-" * 60)
-    print("Training complete - Model saved as 'qlearning_model.pkl'")
+    print("Training complete - Model saved as")
     print("-" * 60)
