@@ -15,7 +15,21 @@ def compute_frac_high_state(profits, weights):
 def compute_theoretical_capacity(weights, capacity):
     avg_weight = sum(weights) / len(weights)
     theoretical_capacity = capacity / avg_weight
-    return theoretical_capacity
+
+    if theoretical_capacity < 90.09:
+        return theoretical_capacity, 0
+    elif theoretical_capacity < 96.56:
+        return theoretical_capacity, 1
+    elif theoretical_capacity < 103.46:
+        return theoretical_capacity, 2
+    elif theoretical_capacity < 111.11:
+        return theoretical_capacity, 3
+    else:
+        return theoretical_capacity, 4
+
+
+def calculate_state(ratio_bin, capacity_bin):
+    return ratio_bin * 5 + capacity_bin
 
 
 if __name__ == "__main__":
@@ -32,16 +46,26 @@ if __name__ == "__main__":
         f for f in os.listdir(instance_folder) if f.endswith(".txt")
     ]
 
-    state_ids = []
+    ids_high_ratio = []
     avg_ratios = []
+    theoretical_capacities = []
+    ids_capacity = []
+    state_ids
     for fname in instance_files:
         n, c, w, p = read_instance(os.path.join(instance_folder, fname))
         p = [p[i][i] for i in range(n)]
 
         # compute state ID
         avg_ratio, ratio_bin = compute_frac_high_state(p, w)
-        state_ids.append(ratio_bin)
+        ids_high_ratio.append(ratio_bin)
         avg_ratios.append(avg_ratio)
+
+        theoretical_capacity, capacity_bin = compute_theoretical_capacity(w, c)
+        theoretical_capacities.append(theoretical_capacity)
+        ids_capacity.append(capacity_bin)
+
+        state_id = calculate_state(ratio_bin, capacity_bin)
+        state_ids.append(state_id)
 
 plt.figure(figsize=(8, 5))
 plt.hist(avg_ratios, bins=40, edgecolor="black")
@@ -50,13 +74,31 @@ plt.ylabel("Frequency")
 plt.title("Distribution of average p/w ratios across all instances")
 plt.grid(alpha=0.3)
 plt.show()
-
-counts = Counter(state_ids)
+counts = Counter(ids_high_ratio)
 print(counts)
 
-q_25 = np.percentile(avg_ratios, 25)
-q_50 = np.percentile(avg_ratios, 50)
-q_75 = np.percentile(avg_ratios, 75)
-print(f"25th percentile: {q_25}")
-print(f"50th percentile: {q_50}")
-print(f"75th percentile: {q_75}")
+counts_capacity = Counter(ids_capacity)
+print(counts_capacity)
+
+counts_state = Counter(state_ids)
+print(state_ids)
+
+sorted_counts = dict(sorted(counts_state.items()))
+print(sorted_counts)
+
+features = {
+    "avg_ratio": avg_ratios,
+    "theoretical_capacity": theoretical_capacities,
+}
+
+for feature_name, feature_values in features.items():
+    print(f"\n{feature_name}:")
+    q_20 = np.percentile(feature_values, 20)
+    q_40 = np.percentile(feature_values, 40)
+    q_60 = np.percentile(feature_values, 60)
+    q_80 = np.percentile(feature_values, 80)
+
+    print(f"{feature_name}20th percentile: {q_20}")
+    print(f"{feature_name}40th percentile: {q_40}")
+    print(f"{feature_name}60th percentile: {q_60}")
+    print(f"{feature_name}80th percentile: {q_80}")

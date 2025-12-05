@@ -25,16 +25,10 @@ The state represents coarse instance characteristics that influence the optimal 
 
 A larger theoretical capacity implies that more items can fit in the knapsack, so a **larger greedy threshold** is often beneficial.
 
-### Quadratic interaction characteristic
+# Fraction high state
 
-\[
-\bar{q} = \frac{1}{n(n-1)} \sum_{i < j} q_{ij}
-\]
+Fraction items with a high profit/weight ratio. The higher the fracitons, the better greedy works. 
 
-This value reflects how important item–item complementarities are in the objective.
-
-- **Low interaction:** greedy can select more items before ILP takes over.  
-- **High interaction:** greedy should stop earlier so ILP can optimize the quadratic structure.
 
 ---
 
