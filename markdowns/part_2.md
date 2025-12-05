@@ -103,13 +103,32 @@ item (from a set) to add, rather than choosing a heuristic move
 
 ## States
 
-- A high reward if the optimum value is high.
-- Negative reward if no solution is found
-- negative reward if time limit is reached. 
+- A feasibile mask, which item is available?
+- Remaining capacity 
+- Item features (normalized)
+  - weight
+  - profit
+  - quadratic profit interaction when added
+- knapsack features:
+  - weight
+  - selected items
 
-## Actions
 
-items to pick 
+  ## Actions
 
-## Rewards
+- Items possible to select
 
+If already selected, then what?
+
+Q[i] = -∞  if available[i] = 0
+
+- Reward
+
+Q[i] = -∞  if available[i] = 0
+
+- Infeasibility penalty 
+
+# Epsiode ends
+
+- no more items to add
+- capacity constraint met
