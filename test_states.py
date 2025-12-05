@@ -5,7 +5,7 @@ def compute_frac_high_state(profits, weights):
 
     if avg_ratio < 2.38:
         ratio_bin = 0
-    elif avg_ratio < 2.86:
+    elif avg_ratio < 2.90:
         ratio_bin = 1
     else:
         ratio_bin = 2
@@ -16,20 +16,16 @@ def compute_theoretical_capacity(weights, capacity):
     avg_weight = sum(weights) / len(weights)
     theoretical_capacity = capacity / avg_weight
 
-    if theoretical_capacity < 90.09:
-        return theoretical_capacity, 0
-    elif theoretical_capacity < 96.56:
-        return theoretical_capacity, 1
-    elif theoretical_capacity < 103.46:
-        return theoretical_capacity, 2
-    elif theoretical_capacity < 111.11:
-        return theoretical_capacity, 3
-    else:
-        return theoretical_capacity, 4
 
+    if theoretical_capacity < 95.06:
+        return theoretical_capacity, 0
+    elif theoretical_capacity < 105.36:
+        return theoretical_capacity, 1
+    else:
+        return theoretical_capacity, 2
 
 def calculate_state(ratio_bin, capacity_bin):
-    return ratio_bin * 5 + capacity_bin
+    return ratio_bin * 3 + capacity_bin
 
 
 if __name__ == "__main__":
@@ -91,14 +87,11 @@ features = {
     "theoretical_capacity": theoretical_capacities,
 }
 
+
+# bins for theoretical capacity
 for feature_name, feature_values in features.items():
     print(f"\n{feature_name}:")
-    q_20 = np.percentile(feature_values, 20)
-    q_40 = np.percentile(feature_values, 40)
-    q_60 = np.percentile(feature_values, 60)
-    q_80 = np.percentile(feature_values, 80)
-
-    print(f"{feature_name}20th percentile: {q_20}")
-    print(f"{feature_name}40th percentile: {q_40}")
-    print(f"{feature_name}60th percentile: {q_60}")
-    print(f"{feature_name}80th percentile: {q_80}")
+    q_33 = np.percentile(feature_values, 33)
+    q_67 = np.percentile(feature_values, 67)
+    print(f"{feature_name}33rd percentile: {q_33}")
+    print(f"{feature_name}67th percentile: {q_67}")
