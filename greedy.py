@@ -1,8 +1,10 @@
 import os
 from gurobipy import Model, GRB
 import pickle
-from training_q import QLearning
 from tqdm import tqdm
+import time
+
+from training_q import QLearning
 
 
 # ---------------------------------------------------------------------
@@ -239,15 +241,20 @@ def solve_q(weights, profits, quad, capacity, fixed_items, q_table, state):
 if __name__ == "__main__":
     # Configuration
     # - Load RL (placeholder)
-    instance_folder = "InstancesEx1_200/"
+    instance_folder = "InstancesEx1/"
     instance_files = [
         f for f in os.listdir(instance_folder) if f.endswith(".txt")
     ]
+
+    # Store results , incl. time to solve
     results = {
         "greedy": [],
+        "greedy_time": [],
         "ilp": [],
-        "reduced_ilp": [],
+        "ilp_time": [],
         "rl": [],
+        "rl_actions": [],
+        "rl_time": [],
     }
 
     # initialize agent
@@ -257,7 +264,9 @@ if __name__ == "__main__":
     actions = model["actions"]
     n_states = model["n_states"]
 
-    agent = QLearning()
+    agent = QLearning(
+        instance_folder=instance_folder
+    )  # instance_folder not needed here
 
     # tqdm
     for fname in tqdm(instance_files):
@@ -271,70 +280,77 @@ if __name__ == "__main__":
         # ------------------------------------------------------
         # Run greedy
         # ------------------------------------------------------
+
+        start_time = time.time()
         S_greedy = greedy_qkp(
             weights,
             profits,
             cap,
             stopping_criterion=None,
         )
+        end_time = time.time()
+        results["greedy_time"].append(end_time - start_time)
 
         # Compute profit
         profit_greedy = compute_profit(S_greedy, profits, quad)
+        time_greedy = end_time - start_time
         results["greedy"].append((fname, len(S_greedy), profit_greedy))
+        results["greedy_time"].append(time_greedy)
         # ------------------------------------------------------
         # Run full ILP
         # ------------------------------------------------------
+        start_time = time.time()
         ilp_obj_val, x_ilp, res_ilp = solve_ilp(weights, profits, quad, cap)
+        end_time = time.time()
+        time_full_ilp = end_time - start_time
         selected_items = [i for i in range(n) if x_ilp[i] > 0.5]
         results["ilp"].append((fname, len(selected_items), ilp_obj_val))
+        results["ilp_time"].append(time_full_ilp)
 
         # ------------------------------------------------------
-        # Run greedy with stopping criterion and reduced ILP
-        # ------------------------------------------------------
-        S_greedy_stop = greedy_qkp(weights, profits, cap, stopping_criterion=30)
-        # Reduced ILP without constraints
-
-        rilp_obj_val, x_rilp, result = solve_reduced_ilp(
-            weights, profits, quad, cap, S_greedy_stop
-        )
-        selected_items = [i for i in x_rilp.keys() if x_rilp[i] > 0.5] + list(
-            S_greedy_stop
-        )
-
-        results["reduced_ilp"].append(
-            (fname, len(selected_items), rilp_obj_val)
-        )
-        # ------------------------------------------------------
-        # Q
+        # Run reduced ILP using Q Learning
         # ------------------------------------------------------
 
+        start_time = time.time()
         state = agent.get_state(weights, profits)
         action_idx = agent.choose_action(state)
         stopping_criterion = actions[action_idx]
-        # greedy
+
+        # Greedy till stopping criterion
         S_greedy_stop = greedy_qkp(
             weights,
             profits,
             cap,
             stopping_criterion=stopping_criterion,
         )
-        q_val, _, _ = solve_reduced_ilp(
+        q_val, x_rilp, _ = solve_reduced_ilp(
             weights, profits, quad, cap, S_greedy_stop
         )
         selected_items = [i for i in x_rilp.keys() if x_rilp[i] > 0.5] + list(
             S_greedy_stop
         )
+
+        end_time = time.time()
+        q_time = end_time - start_time
+        results["rl_actions"].append((fname, stopping_criterion))
+        results["rl_time"].append(q_time)
         results["rl"].append((fname, len(selected_items), q_val))
+        # ------------------------------------------------------
+        # Print results
+        # ------------------------------------------------------
+        #
+        greedy_rel = 100 * profit_greedy / ilp_obj_val
+        rilp_rel = 100 * q_val / ilp_obj_val
 
-    # Print results relative to full ILP
-    for i in range(len(instance_files)):
-        greedy_profit = results["greedy"][i][2]
-        rilp_profit = results["reduced_ilp"][i][2]
-        ilp_profit = results["ilp"][i][2]  # full ILP = 100%
+        print(f"Instance: {fname}")
+        print(f"Greedy:   Profit: {greedy_rel}")
+        print(f"Q RILP:     Profit: {rilp_rel}")
+        print("-" * 70)
 
-        greedy_rel = 100 * greedy_profit / ilp_profit
-        rilp_rel = 100 * rilp_profit / ilp_profit
-        rl_rel = 100 * results["rl"][i][2] / ilp_profit
-        print(
-            f"Greedy: {greedy_rel:6.2f}%   RILP: {rilp_rel:6.2f}%   RL: {rl_rel:6.2f}%  Full ILP: 100.00%"
-        )
+        # Time results
+        print("-" * 70)
+        print("Time Results:")
+        print(f"RL time: {q_time:.4f} seconds")
+        print(f"Full ILP time: {time_full_ilp:.4f} seconds")
+
+        print("-" * 70)
