@@ -3,6 +3,10 @@ import os
 import random
 from collections import deque
 
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.ndimage import uniform_filter1d
+
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
@@ -10,7 +14,39 @@ import tensorflow as tf
 from tensorflow.keras import layers, models, optimizers
 import tqdm
 
-from greedy import greedy_qkp, read_instance, compute_profit
+from e1_greedy import read_instance, compute_profit
+
+
+def greedy_heuristic(weights, profits, quad, capacity):
+    n = len(weights)
+    remaining_capacity = capacity
+    total_profit = 0
+    marginal_profits = []
+    selected = set()
+
+    while remaining_capacity > 0:
+        candidates = [i for i in range(n) if weights[i] <= remaining_capacity]
+        candidates = [
+            i
+            for i in range(n)
+            if i not in selected and weights[i] <= remaining_capacity
+        ]
+
+        if not candidates:
+            break
+        best_item = max(candidates, key=lambda i: profits[i] / weights[i])
+        selected.add(best_item)
+
+        marginal_profit = profits[best_item] + np.sum(
+            quad[best_item, list(selected)]
+        )
+        marginal_profits.append(marginal_profit)
+
+        total_profit += marginal_profit
+
+        remaining_capacity -= weights[best_item]
+
+    return total_profit, marginal_profits
 
 
 class PERBuffer:
@@ -136,9 +172,8 @@ class QEnv(gym.Env):
         self.current_reward = 0
 
         # Compute greedy profit
-        greedy_selected = greedy_qkp(self.weights, self.profits, self.capacity)
-        self.greedy_profit = compute_profit(
-            greedy_selected, self.profits, self.quad
+        self.greedy_profit, self._marginal_profits = greedy_heuristic(
+            self.weights, self.profits, self.quad, self.capacity
         )
 
     def reset(self, *, seed=None):
@@ -152,7 +187,7 @@ class QEnv(gym.Env):
 
         return self._get_obs(), {}
 
-    def step(self, action):
+    def step(self, action, steps):
         info = {"instance_id": self.instance_id}
         terminated = False
         truncated = False
@@ -167,8 +202,15 @@ class QEnv(gym.Env):
 
         # Calculate marginal profit
         marginal = self._marginal_profit(action)
-
-        reward = marginal / self.greedy_profit
+        greedy_marginal = (
+            self._marginal_profits[steps]
+            if steps < len(self._marginal_profits)
+            else 1.0
+        )
+        eps = 1e-6
+        ratio = (marginal - greedy_marginal) / (abs(greedy_marginal) + eps)
+        ratio = np.clip(ratio, -1.0, +1.0)
+        reward = ratio
         # Apply selection
         self.selected[action] = 1
         self.available[action] = 0
@@ -183,6 +225,8 @@ class QEnv(gym.Env):
                 self.selected, self.profits, self.quad
             )
             terminal_reward = (final_profit / self.greedy_profit) - 1
+            terminal_reward *= 10
+            terminal_reward = np.clip(terminal_reward, -10, +10)
 
             info["reason"] = "no_feasible_items"
             info["optimality_ratio"] = terminal_reward
@@ -215,7 +259,6 @@ class QEnv(gym.Env):
         if len(selected_items) == 0:
             marginal_profit_vector = self.profits / self.max_p
         else:
-            # TODO: check if axis should be 0 or 1
             marginal_profit_vector = self.profits / self.max_p + (
                 self.quad[:, selected_items].sum(axis=1) / self.max_q
             )
@@ -579,7 +622,7 @@ def train_episode(env, agent):
 
         # Select and perform action
         action = agent.act(state, feasible)
-        next_state, reward, terminated, _, info = env.step(action)
+        next_state, reward, terminated, _, info = env.step(action, steps)
 
         # Store experience
         next_feasible = env.get_feasible_mask() if not terminated else None
@@ -632,7 +675,7 @@ def train_episode(env, agent):
 
 def train(
     instance_folder,
-    num_episodes=2000,
+    num_episodes=1000,
     save_path="exc2.keras",
     max_instances=None,
     print_interval=10,
@@ -682,31 +725,19 @@ def train(
         opt = agent.all_episode_optimality[-1]
         reward = agent.all_episode_rewards[-1]
         avg_td_error = np.mean(td_errors) if td_errors is not None else 0
-        avg_profit_10 = (
-            np.mean(list(agent.recent_profits)[-10:])
-            if agent.recent_profits
-            else 0
-        )
-        avg_opt_10 = (
-            np.mean(list(agent.recent_optimality)[-10:])
-            if agent.recent_optimality
-            else 0
-        )
-        avg_reward_10 = (
-            np.mean(list(agent.recent_rewards)[-10:])
-            if agent.recent_rewards
-            else 0
-        )
+
+        def _get_avg_last(data, n=50):
+            return np.mean(list(data)[-n:]) if data else 0
 
         # Print progress every 10 episodes
         if episode % print_interval == 0:
             print(
                 f"Episode {episode:4d} | "
-                f"Profit: {profit:6.0f}  (avg10: {avg_profit_10:6.0f}) | "
-                f"Opt: {opt:5.2f}  (avg10: {avg_opt_10:5.2f}) | "
+                f"Profit: {profit:6.0f}  (avg50: {_get_avg_last(agent.all_episode_profits):6.0f}) | "
+                f"Opt: {opt:5.2f}  (avg50: {_get_avg_last(agent.all_episode_optimality):5.2f}) | "
                 f"TD Error: {avg_td_error:6.3f} | "
                 f"Train Steps: {agent.train_steps:6d} | "
-                f"Reward: {reward:6.1f}  (avg10: {avg_reward_10:6.1f}) | "
+                f"Reward: {reward:6.1f}  (avg50: {_get_avg_last(agent.all_episode_rewards):6.1f}) | "
                 f"Eps: {agent.epsilon:.3f}"
             )
         # Save checkpoint every 50 episodes
@@ -719,11 +750,6 @@ def train(
     print("\n" + "-" * 80)
     print(f"Training complete: model saved to {save_path}")
     return agent
-
-
-import matplotlib.pyplot as plt
-import numpy as np
-from scipy.ndimage import uniform_filter1d
 
 
 def smooth(data, window=20):
@@ -1248,11 +1274,11 @@ def plot_training_summary(agent, save_path=None):
 if __name__ == "__main__":
     import tqdm
 
-    instance_folder = "InstancesEx1_50_test500/"
+    instance_folder = "InstancesEx1/"
 
     agent = train(
         instance_folder=instance_folder,
-        num_episodes=2000,
+        num_episodes=1000,
         save_path="simple_dqn.keras",
     )
     # plot_rl_diagnostics(agent, save_path='diagnostics.png')
