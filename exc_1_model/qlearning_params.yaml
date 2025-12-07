@@ -1,0 +1,5 @@
+alpha: 0.1
+current_episode: 100
+epsilon: 0.42650460709830135
+epsilon_decay: 0.995
+epsilon_min: 0.05
