@@ -48,7 +48,6 @@ def greedy_qkp(
     n = len(weights)
     selected = set()
     remaining_capacity = capacity
-
     while remaining_capacity > 0:
         if (
             stopping_criterion is not None

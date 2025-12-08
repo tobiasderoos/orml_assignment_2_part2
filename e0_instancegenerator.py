@@ -19,10 +19,10 @@ if __name__ == "__main__":
     n = 50
     seed = 400
     np.random.seed(seed)
-    dir = "InstancesEx1_50_test500"
+    dir = "InstancesEx2"
     os.makedirs(dir, exist_ok=True)
 
-    for it in range(500):
+    for it in range(10):
         # Generate instance
         c, w, p = generate_instance(n)
 

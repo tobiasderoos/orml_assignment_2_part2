@@ -294,7 +294,7 @@ class QLearning:
 # Main training
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
-    from greedy import (
+    from exc_1_greedy import (
         read_instance,
         greedy_qkp,
         compute_profit,

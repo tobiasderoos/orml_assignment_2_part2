@@ -16,13 +16,13 @@ def compute_theoretical_capacity(weights, capacity):
     avg_weight = sum(weights) / len(weights)
     theoretical_capacity = capacity / avg_weight
 
-
     if theoretical_capacity < 95.06:
         return theoretical_capacity, 0
     elif theoretical_capacity < 105.36:
         return theoretical_capacity, 1
     else:
         return theoretical_capacity, 2
+
 
 def calculate_state(ratio_bin, capacity_bin):
     return ratio_bin * 3 + capacity_bin
@@ -32,7 +32,7 @@ if __name__ == "__main__":
     import os
     from collections import Counter
     from matplotlib import pyplot as plt
-    from greedy import read_instance
+    from exc_1_greedy import read_instance
 
     import numpy as np
 

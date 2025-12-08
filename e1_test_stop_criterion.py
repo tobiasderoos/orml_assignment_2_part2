@@ -2,7 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-from greedy import (
+from exc_1_greedy import (
     read_instance,
     solve_ilp,
     solve_reduced_ilp,
