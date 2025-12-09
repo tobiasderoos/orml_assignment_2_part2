@@ -41,3 +41,11 @@ processed/
 *.xls
 *.parquet
 
+# Folders
+Lab9_codes/*
+archive/*
+logs/*
+exc_2_plots/ *
+
+exc_1_plots/*
+logs_exc1/*
