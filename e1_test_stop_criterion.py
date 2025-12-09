@@ -2,7 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-from exc_1_greedy import (
+from e1_greedy import (
     read_instance,
     solve_ilp,
     solve_reduced_ilp,
@@ -23,7 +23,7 @@ all_gaps = []
 max_S_global = 0
 
 for fname in instance_files:
-    print(f"\nProcessing {fname}...")
+    print(f"\nProcessing {fname}.")
     n, cap, weights, quad = read_instance(os.path.join(instance_folder, fname))
     profits = [quad[i][i] for i in range(n)]
 

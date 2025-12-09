@@ -32,7 +32,7 @@ if __name__ == "__main__":
     import os
     from collections import Counter
     from matplotlib import pyplot as plt
-    from exc_1_greedy import read_instance
+    from e1_greedy import read_instance
 
     import numpy as np
 

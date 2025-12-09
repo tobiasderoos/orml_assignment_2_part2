@@ -1,3 +1,4 @@
+from datetime import datetime
 import os
 import pickle
 import yaml
@@ -5,11 +6,15 @@ import numpy as np
 import tqdm
 from gurobipy import GRB
 import time
+import shutil
+from torch.utils.tensorboard import SummaryWriter
 
 
 # ---------------------------------------------------------------------
 # Q-Learning
 # ---------------------------------------------------------------------
+
+
 class QLearning:
     """
     Q-Learning hyper-heuristic to learn the best stopping criterion.
@@ -21,13 +26,19 @@ class QLearning:
 
     def __init__(
         self,
-        instance_folder,
+        instance_files,
         reset_params=False,
-        model_name="qlearning_model.pkl",
+        model_name="qlearning_model",
     ):
+        shutil.rmtree("logs_exc1", ignore_errors=True)
+        os.makedirs("logs_exc1", exist_ok=True)
+
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.writer = SummaryWriter(log_dir=f"logs_exc1/run_{run_id}")
         self.reset_params = reset_params
-        self.instance_folder = instance_folder
         self.model_name = model_name
+
+        self.instance_files = instance_files
 
         # Filenames derived automatically
         self.model_pkl = f"{self.model_name}.pkl"
@@ -43,7 +54,7 @@ class QLearning:
         # Q-table: states x actions
         self.q_table = np.zeros((self.n_states, len(self.actions)))
 
-        # Q-learning / bandit parameters
+        # Q-learning
         self.alpha = 0.1  # Learning rate
         self.epsilon = 1.0  # Exploration rate (starts high)
         self.epsilon_decay = 0.9975
@@ -58,8 +69,13 @@ class QLearning:
         self.full_ilp_cache = {}
         self.reduced_ilp_cache = {}
 
+        self.all_episode_rewards = []
+        self.all_episode_optimality = []
+        self.epsilon_history = []
+        self.q_value_history = []
+
     def _save(self):
-        with open(self.model_pkl, "wb") as f:
+        with open(f"{self.model_pkl}", "wb") as f:
             pickle.dump(
                 {
                     "q_table": self.q_table,
@@ -85,7 +101,7 @@ class QLearning:
         print(f"Parameters saved to {self.model_yaml}")
 
     def _load(self):
-        with open(self.model_pkl, "r") as f:
+        with open(self.model_pkl, "rb") as f:
             data = pickle.load(f)
         self.q_table = data["q_table"]
         self.actions = data["actions"]
@@ -135,6 +151,7 @@ class QLearning:
 
     @staticmethod
     def calculate_state(ratio_bin, capacity_bin):
+        """Combine 3×3 bins into a single state in [0–8]."""
         return ratio_bin * 3 + capacity_bin
 
     def get_state(self, weights, profits, capacity):
@@ -143,20 +160,20 @@ class QLearning:
         state = self.calculate_state(ratio_bin, capacity_bin)
         return state
 
-    def solve_full_ilp_cache(self, fname, weights, profits, quad, capacity):
+    def solve_full_ilp_cache(self, filepath, weights, profits, quad, capacity):
         """
         Solve full ILP and cache results.
         """
-        if fname in self.full_ilp_cache:
-            return self.full_ilp_cache[fname]
+        if filepath in self.full_ilp_cache:
+            return self.full_ilp_cache[filepath]
         else:
             obj_val, x, status = solve_ilp(weights, profits, quad, capacity)
-            self.full_ilp_cache[fname] = (obj_val, x, status)
+            self.full_ilp_cache[filepath] = (obj_val, x, status)
             return obj_val, x, status
 
     def solve_rilp_cache(
         self,
-        fname,
+        filepath,
         weights,
         profits,
         quad,
@@ -167,7 +184,7 @@ class QLearning:
         """
         Solve reduced ILP and cache results.
         """
-        key = (fname, stopping_criterion)
+        key = (filepath, stopping_criterion)
 
         if key in self.reduced_ilp_cache:
             return self.reduced_ilp_cache[key]
@@ -214,18 +231,13 @@ class QLearning:
         return 0.0
 
     # Training loop
-    def train(self, n_episodes=100):
-        instance_files = [
-            f for f in os.listdir(self.instance_folder) if f.endswith(".txt")
-        ]
-
+    def train(self, n_episodes=10):
         print(
-            f"Training Q-learning on {len(instance_files)} instances for {n_episodes} episodes..."
+            f"Training Q-learning on {len(self.instance_files)} instances for {n_episodes} episodes."
         )
         # TQDM
         for episode in tqdm.tqdm(range(n_episodes)):
-            fname = np.random.choice(instance_files)
-            filepath = os.path.join(self.instance_folder, fname)
+            filepath = np.random.choice(self.instance_files)
 
             # Load instance
             n, capacity, weights, quad = read_instance(filepath)
@@ -246,14 +258,14 @@ class QLearning:
             greedy_profit = compute_profit(selected_greedy, profits, quad)
 
             # Full ILP cached
-            ilp_obj_val, _, status = self.solve_full_ilp_cache(
-                fname, weights, profits, quad, capacity
+            ilp_obj_val, _, _ = self.solve_full_ilp_cache(
+                filepath, weights, profits, quad, capacity
             )
 
             # Reduced ILP
             start = time.time()
             rilp_obj_val, _, rilp_status = self.solve_rilp_cache(
-                fname,
+                filepath,
                 weights,
                 profits,
                 quad,
@@ -273,7 +285,54 @@ class QLearning:
             reward += self.compute_time_penalty(end - start)
             reward += self.compute_penalty_model_status(rilp_status)
 
+            self.all_episode_rewards.append(reward)
+            self.all_episode_optimality.append(
+                (rilp_obj_val - greedy_profit) / (ilp_obj_val - greedy_profit)
+            )
+
+            self.epsilon_history.append(self.epsilon)
+            q_stats = {
+                "mean": float(np.mean(self.q_table)),
+                "max": float(np.max(self.q_table)),
+                "min": float(np.min(self.q_table)),
+                "range": float(np.ptp(self.q_table)),
+            }
+
+            self.q_value_history.append(q_stats)
+            # Print progress every 5 episodes
+            if (episode + 1) % 5 == 0:
+                print(
+                    f"\nEpisode {episode + 1}/{n_episodes} - "
+                    f"Avg Reward: {np.mean(self.all_episode_rewards[-5:]):.4f}, "
+                    f"Avg Relative Profit: {np.mean(self.all_episode_optimality[-5:]):.4f}, "
+                    f"Epsilon: {self.epsilon:.4f}"
+                )
+
             self.update_q_table(state, action_idx, reward)
+
+            # TensorBoard Logging
+            idx = episode  # clearer
+
+            self.writer.add_scalar(
+                "Reward/Episode", self.all_episode_rewards[-1], idx
+            )
+            self.writer.add_scalar(
+                "Optimality/RelativeProfit",
+                self.all_episode_optimality[-1],
+                idx,
+            )
+
+            # Q-table stats
+            self.writer.add_scalar("QTable/Mean", q_stats["mean"], idx)
+            self.writer.add_scalar("QTable/Max", q_stats["max"], idx)
+            self.writer.add_scalar("QTable/Min", q_stats["min"], idx)
+            self.writer.add_scalar("QTable/Range", q_stats["range"], idx)
+
+            # Profit diagnostics
+            self.writer.add_scalar("Profit/RILP", rilp_obj_val, idx)
+
+            # Exploration
+            self.writer.add_scalar("Exploration/Epsilon", self.epsilon, idx)
 
             # Decay epsilon
             self.epsilon = max(
@@ -282,19 +341,133 @@ class QLearning:
             )
             # Store model every 10 episodes
             if (episode + 1) % 10 == 0:
-                self._save()
-                self._save_params(current_episode=episode + 1)
+                # self._save()
+                # self._save_params(current_episode=episode + 1)
+                self.writer.flush()
+        print("\nTraining completed")
+        self.writer.close()
 
-            print("\nTraining completed")
-            print("\nLearned Q-table:")
-            print(self.q_table)
+        return self
+
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+def plot_qlearning_diagnostics(agent, alpha=0.1, save_path=None):
+    """
+    Diagnostic plots for your Q-learning training run:
+    1. Optimality ratio (profit / greedy)
+    2. Episode rewards
+    3. Q-table statistics across training
+    4. Epsilon decay
+    """
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+
+    # ----------------------------------------------------
+    # Episode axis
+    # ----------------------------------------------------
+    episodes = np.arange(len(agent.all_episode_rewards))
+
+    # ----------------------------------------------------
+    # 1. Optimality ratio
+    # ----------------------------------------------------
+    ax1 = axes[0, 0]
+    opt = np.array(agent.all_episode_optimality)
+
+    ax1.plot(episodes, opt, alpha=0.3, color="blue", label="raw")
+    ax1.plot(
+        smooth_ema(opt, alpha), color="blue", linewidth=2, label="smoothed"
+    )
+    ax1.axhline(1.0, color="red", linestyle="--", label="greedy = 1")
+
+    ax1.set_title("Optimality ratio (RILP / Greedy)")
+    ax1.set_xlabel("Episode")
+    ax1.set_ylabel("Optimality")
+    ax1.legend(fontsize=8)
+    ax1.grid(alpha=0.3)
+
+    # ----------------------------------------------------
+    # 2. Episode rewards
+    # ----------------------------------------------------
+    ax2 = axes[0, 1]
+    rewards = np.array(agent.all_episode_rewards)
+
+    ax2.plot(episodes, rewards, alpha=0.3, color="green", label="raw")
+    ax2.plot(
+        smooth_ema(rewards, alpha), color="green", linewidth=2, label="smoothed"
+    )
+
+    ax2.set_title("Episode Rewards")
+    ax2.set_xlabel("Episode")
+    ax2.set_ylabel("Reward")
+    ax2.legend(fontsize=8)
+    ax2.grid(alpha=0.3)
+
+    # ----------------------------------------------------
+    # 3. Q-table statistics
+    # ----------------------------------------------------
+    ax3 = axes[1, 0]
+
+    q_means = [q["mean"] for q in agent.q_value_history]
+    q_maxs = [q["max"] for q in agent.q_value_history]
+    q_mins = [q["min"] for q in agent.q_value_history]
+
+    steps = np.arange(len(q_means))
+
+    ax3.plot(steps, q_means, color="blue", label="mean Q")
+    ax3.fill_between(
+        steps, q_mins, q_maxs, color="blue", alpha=0.2, label="range"
+    )
+
+    ax3.set_title("Q-table statistics")
+    ax3.set_xlabel("Training step")
+    ax3.set_ylabel("Q value")
+    ax3.legend(fontsize=8)
+    ax3.grid(alpha=0.3)
+
+    # ----------------------------------------------------
+    # 4. Epsilon decay
+    # ----------------------------------------------------
+    ax4 = axes[1, 1]
+
+    eps = np.array(agent.epsilon_history)
+
+    ax4.plot(eps, color="purple", linewidth=2)
+    ax4.set_title("Epsilon decay")
+    ax4.set_xlabel("Episode")
+    ax4.set_ylabel("Epsilon")
+    ax4.grid(alpha=0.3)
+
+    # ----------------------------------------------------
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.savefig(
+            save_path.replace(".png", ".pdf"), dpi=300, bbox_inches="tight"
+        )
+
+    plt.show()
+
+
+def smooth_ema(data, alpha=0.1):
+    """
+    Exponential moving average smoothing.
+    """
+    smoothed = np.zeros_like(data)
+    smoothed[0] = data[0]
+    for t in range(1, len(data)):
+        smoothed[t] = alpha * data[t] + (1 - alpha) * smoothed[t - 1]
+    return smoothed
 
 
 # ---------------------------------------------------------------------
 # Main training
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
-    from exc_1_greedy import (
+    from e1_greedy import (
         read_instance,
         greedy_qkp,
         compute_profit,
@@ -302,22 +475,28 @@ if __name__ == "__main__":
         solve_ilp,
     )
 
-    # Create and train the Q-learning agent
-
-    agent = QLearning(
-        instance_folder="InstancesEx1_200/",
-        reset_params=True,
-        model_name="qlearning_25_states",
+    instance_folder = "InstancesEx1_200"
+    instance_files = sorted(
+        os.path.join(instance_folder, f)
+        for f in os.listdir(instance_folder)
+        if os.path.isfile(os.path.join(instance_folder, f))
     )
 
-    episodes = 100
+    agent = QLearning(
+        instance_files,
+        reset_params=True,
+        model_name="exc_1_model/model_qlearning",
+    )
+
     # Train on instances
-    agent.train(n_episodes=episodes)
+    agent.train(n_episodes=500)
 
     # Save the trained model
     agent._save()
-    agent._save_params(current_episode=episodes)
 
     print("\n" + "-" * 60)
     print("Training complete - Model saved as")
     print("-" * 60)
+    plot_qlearning_diagnostics(
+        agent, alpha=0.1, save_path="exc_1_plots/qlearning_training.png"
+    )

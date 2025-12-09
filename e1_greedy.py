@@ -236,7 +236,7 @@ def solve_q(weights, profits, quad, capacity, fixed_items, q_table, state):
 # Run script to compare greedy, ILP, reduced ILP, and RL
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
-    from training_q import QLearning
+    from e1_training_q import QLearning
 
     # Configuration
     # - Load RL (placeholder)
@@ -257,15 +257,13 @@ if __name__ == "__main__":
     }
 
     # initialize agent
-    with open("qlearning_model.pkl", "rb") as f:
+    with open("exc_1_model/qlearning_model.pkl", "rb") as f:
         model = pickle.load(f)  #
     q_table = model["q_table"]
     actions = model["actions"]
     n_states = model["n_states"]
 
-    agent = QLearning(
-        instance_folder=instance_folder
-    )  # instance_folder not needed here
+    agent = QLearning(instance_folder=instance_folder)
 
     # tqdm
     for fname in tqdm(instance_files):
@@ -311,7 +309,7 @@ if __name__ == "__main__":
         # ------------------------------------------------------
 
         start_time = time.time()
-        state = agent.get_state(weights, profits)
+        state = agent.get_state(weights, profits, cap)
         action_idx = agent.choose_action(state)
         stopping_criterion = actions[action_idx]
 

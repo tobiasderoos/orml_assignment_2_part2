@@ -3,7 +3,6 @@ import os
 import random
 from collections import deque
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 import gymnasium as gym
@@ -14,8 +13,6 @@ from tensorflow.keras import layers, models, optimizers
 import tqdm
 
 from e1_greedy import read_instance, compute_profit
-
-from scipy.ndimage import uniform_filter1d
 
 
 def greedy_heuristic(weights, profits, quad, capacity):
@@ -108,7 +105,7 @@ class QEnv(gym.Env):
         self.remaining_capacity = self.capacity
         self.current_weight = 0.0
         self.current_profit = 0.0
-
+        self.step_count = 0
         return self._get_obs(), {}
 
     def step(self, action):
@@ -238,16 +235,16 @@ class QAgent:
         self,
         state_size,
         action_size,
-        gamma=0.9975,
-        tau=0.001,
+        gamma=0.99,
+        tau=0.005,
         epsilon=1.0,
         epsilon_min=0.05,
-        epsilon_decay=0.999,
-        lr=0.0002,
-        batch_size=128,
+        epsilon_decay=0.9995,
+        lr=0.0001,
+        batch_size=256,
         memory_size=25000,
         target_update_interval=250,
-        warmup_steps=100,
+        warmup_steps=1000,
     ):
         self.state_size = state_size
         self.action_size = action_size
@@ -297,6 +294,7 @@ class QAgent:
         log_dir = "logs/simple_dqn_" + datetime.datetime.now().strftime(
             "%Y%m%d-%H%M%S"
         )
+        os.makedirs(log_dir, exist_ok=True)
         self.writer = tf.summary.create_file_writer(log_dir)
 
     def _build_model(self, lr):
@@ -304,8 +302,8 @@ class QAgent:
         model = models.Sequential(
             [
                 layers.Input(shape=(self.state_size,)),
-                layers.Dense(256, activation="relu"),
-                layers.Dense(256, activation="relu"),
+                layers.Dense(512, activation="relu"),
+                layers.Dense(512, activation="relu"),
                 layers.Dense(self.action_size, activation="linear"),
             ]
         )
@@ -576,6 +574,7 @@ def train(
     save_path="exc2.keras",
     max_instances=None,
     print_interval=10,
+    agent=None,
 ):
     """Main training loop"""
 
@@ -592,15 +591,14 @@ def train(
         print(
             f"  Instance {idx}: n={n}, capacity={cap}, greedy_profit={env.greedy_profit:.2f}"
         )
-    example_env = envs[0]
-    # Create agent
-    agent = QAgent(
-        state_size=example_env.observation_space.shape[0],
-        action_size=example_env.action_space.n,
-        batch_size=64,
-    )
     print(f"\nTraining for {num_episodes} episodes.")
     print("\n" + "-" * 80)
+    if agent is None:
+        example_env = envs[0]
+        agent = agent = QAgent(
+            state_size=example_env.observation_space.shape[0],
+            action_size=example_env.action_space.n,
+        )
 
     # Training loop
     for episode in tqdm.tqdm(range(num_episodes)):
@@ -812,7 +810,9 @@ def evaluate_agent_on_instances(agent, instance_files):
 
 
 if __name__ == "__main__":
-    instance_folder = "InstancesEx2/"
+    import matplotlib.pyplot as plt
+
+    instance_folder = "InstancesEx2_test/"
     instance_files = sorted(
         os.path.join(instance_folder, f)
         for f in os.listdir(instance_folder)
@@ -821,10 +821,18 @@ if __name__ == "__main__":
 
     # Train
     agent = train(
-        instance_files=instance_files,
-        num_episodes=50,
-        save_path="exc_2_model/test_model.keras",
+        instance_files=instance_files[:5],
+        num_episodes=10000,
+        save_path="exc_2_model/phase1.keras",
     )
+
+    agent = train(
+        instance_files=instance_files[5:15],
+        num_episodes=15000,
+        save_path="exc_2_model/phase2.keras",
+        agent=agent,
+    )
+
     for alpha in [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5]:
         plot_rl_diagnostics(
             agent,

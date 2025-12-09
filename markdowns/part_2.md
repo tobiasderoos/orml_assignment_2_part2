@@ -1,9 +1,9 @@
 # RL Hyper-Heuristic for Greedy–ILP Threshold Selection
 
-This module applies **Q-learning** to determine how many items the greedy heuristic should select before switching to the ILP solver in the Quadratic Knapsack Problem (QKP).  
-The goal is to learn an **adaptive stopping criterion** that improves solution quality while keeping ILP computation time low.
+This module applies Q-learning to determine how many items the greedy heuristic should select before switching to the ILP solver in the Quadratic Knapsack Problem (QKP).  
+The goal is to learn an adaptive stopping criterion that improves solution quality while keeping ILP computation time low.
 
-The agent makes **only one decision** per episode:  
+The agent makes only one decision per episode:  
 select the greedy threshold \(k\) at the start, based on the observed instance characteristics.  
 After this decision, the greedy phase and ILP phase run automatically.
 
@@ -23,7 +23,7 @@ The state represents coarse instance characteristics that influence the optimal 
   \]
 - Discretize \(T\) into 5 buckets to ensure balanced visitation during training.
 
-A larger theoretical capacity implies that more items can fit in the knapsack, so a **larger greedy threshold** is often beneficial.
+A larger theoretical capacity implies that more items can fit in the knapsack, so a larger greedy threshold is often beneficial.
 
 # Fraction high state
 
@@ -36,12 +36,12 @@ Fraction items with a high profit/weight ratio. The higher the fracitons, the be
 
 Actions specify the number of greedy selections before switching to ILP: {5, 10, 15 ... 100}
 
+May not produce the best optimal threshold, but: 
+If the optimum is for example 17, the model should pick 15 as this would also give the optimal solution, only take a bit longer to compute as you have two more items for the ILP to solve.
 
 ### Rationale
-- Using increments of **5** significantly reduces computational cost, and accelerates convergence.
+- Using increments of 5 significantly reduces computational cost, and accelerates convergence.
 - These thresholds still cover the full practical range of early vs. late ILP intervention.
-
-May. not result in best thrshols selection.
 
 ---
 
@@ -50,7 +50,7 @@ May. not result in best thrshols selection.
 Rewards evaluate the quality of the combined greedy + ILP solution.
 
 ### Reward scaling
-Rewards are normalized using full ILP solution and Greedy-Only soluiton:
+Rewards are normalized using full ILP solution and Greedy-only soluiton:
 - **Full ILP solution** → reward = 1  
 - **Greedy-only solution** → reward = 0  
 - **Reduced ILP solution (RILP)** → reward in (0, 1): RILP / (full_ILP - Greedy)
@@ -64,6 +64,8 @@ Negative rewards are assigned when:
 Because a faster ILP solve is preferable, reward incorporates a small penalty for runtime:
 
 The closer to 15 secondds, the better. Greedy heuristic is baseline, 15 seconds is upper limit. 
+
+This should ensure that higher thresholds are preferred over lower thresholds, even if they give the same optimal value. 
 
 ### Goal
 Reward solutions that are:
