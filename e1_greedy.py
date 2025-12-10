@@ -3,6 +3,7 @@ from gurobipy import Model, GRB
 import pickle
 from tqdm import tqdm
 import time
+import numpy as np
 
 
 # ---------------------------------------------------------------------
@@ -23,6 +24,7 @@ def read_instance(filename):
 def greedy_qkp(
     weights,
     profits,
+    quad,
     capacity,
     stopping_criterion=None,
 ):
@@ -65,8 +67,15 @@ def greedy_qkp(
         if not candidates:
             break
 
+        marginal_profits = {
+            i: sum(quad[i][j] for j in selected) for i in candidates
+        }
         # choose item with best linear profit-to-weight ratio
-        best_item = max(candidates, key=lambda i: profits[i] / weights[i])
+        best_item = max(
+            candidates,
+            key=lambda i: (profits[i] + marginal_profits[i]) / weights[i],
+        )
+        # best_item = max(candidates, key=lambda i: profits[i] / weights[i])
 
         # select item
         selected.add(best_item)
@@ -196,9 +205,11 @@ def solve_reduced_ilp(weights, profits, quad_profits, capacity, selected):
                 m.addConstr(y[i, j] <= x[j])
 
     # 6. Objective = linear + quadratic terms
-    constant_profits = sum(profits[i] for i in S)
+    constant_profits = sum(profits[i] for i in S)  # already selected items
     # constant profits from newly selected items
-    linear_profit = sum(profits[i] * x[i] for i in R)  # Variable part
+    linear_profit = sum(
+        profits[i] * x[i] for i in R
+    )  # Variable lineair profits
     quad_profit = sum(
         quad_profits[i][j] * y[i, j] for i in range(n) for j in range(i + 1, n)
     )
@@ -210,7 +221,7 @@ def solve_reduced_ilp(weights, profits, quad_profits, capacity, selected):
     x_updated = {}
     for i in R:
         x_updated[i] = x[i].X
-    obj = m.objVal if m.status in [GRB.OPTIMAL, GRB.TIME_LIMIT] else None
+    obj = m.objVal
     return obj, x_updated, m.status
 
 
@@ -240,10 +251,10 @@ if __name__ == "__main__":
 
     # Configuration
     # - Load RL (placeholder)
-    instance_folder = "InstancesEx1/"
+    instance_folder = "InstancesEx1_200/"
     instance_files = [
         f for f in os.listdir(instance_folder) if f.endswith(".txt")
-    ]
+    ][:5]
 
     # Store results , incl. time to solve
     results = {
@@ -257,16 +268,16 @@ if __name__ == "__main__":
     }
 
     # initialize agent
-    with open("exc_1_model/qlearning_model.pkl", "rb") as f:
+    with open("exc_1_model/model_qlearning_5.pkl", "rb") as f:
         model = pickle.load(f)  #
     q_table = model["q_table"]
     actions = model["actions"]
     n_states = model["n_states"]
 
-    agent = QLearning(instance_folder=instance_folder)
+    agent = QLearning(instance_files)
 
     # tqdm
-    for fname in tqdm(instance_files):
+    for fname in tqdm(instance_files[:1]):
         filepath = os.path.join(instance_folder, fname)
 
         # Load instance
@@ -282,6 +293,7 @@ if __name__ == "__main__":
         S_greedy = greedy_qkp(
             weights,
             profits,
+            quad,
             cap,
             stopping_criterion=None,
         )
@@ -317,15 +329,32 @@ if __name__ == "__main__":
         S_greedy_stop = greedy_qkp(
             weights,
             profits,
+            quad,
             cap,
             stopping_criterion=stopping_criterion,
         )
-        q_val, x_rilp, _ = solve_reduced_ilp(
-            weights, profits, quad, cap, S_greedy_stop
-        )
-        selected_items = [i for i in x_rilp.keys() if x_rilp[i] > 0.5] + list(
-            S_greedy_stop
-        )
+
+        # Check if still capacity left
+        remaining_capacity = cap - sum(weights[i] for i in S_greedy_stop)
+        candidates = [
+            i
+            for i in range(n)
+            if i not in S_greedy_stop and weights[i] <= remaining_capacity
+        ]
+        if not candidates:
+            # no more items fit, skip RILP
+            print("No remaining capacity after greedy, skipping RILP.")
+            q_val = compute_profit(S_greedy_stop, profits, quad)
+            selected_items = list(S_greedy_stop)
+        else:
+            print("Solving RILP after greedy selection...")
+            q_val, x_rilp, _ = solve_reduced_ilp(
+                weights, profits, quad, cap, S_greedy_stop
+            )
+            selected_items = [
+                i for i in x_rilp.keys() if x_rilp[i] > 0.5
+            ] + list(S_greedy_stop)
+            q_val = compute_profit(selected_items, profits, quad)
 
         end_time = time.time()
         q_time = end_time - start_time
@@ -336,18 +365,10 @@ if __name__ == "__main__":
         # Print results
         # ------------------------------------------------------
         #
-        greedy_rel = 100 * profit_greedy / ilp_obj_val
-        rilp_rel = 100 * q_val / ilp_obj_val
-
         print(f"Instance: {fname}")
-        print(f"Greedy:   Profit: {greedy_rel}")
-        print(f"Q RILP:     Profit: {rilp_rel}")
-        print("-" * 70)
-
-        # Time results
-        print("-" * 70)
-        print("Time Results:")
-        print(f"RL time: {q_time:.4f} seconds")
-        print(f"Full ILP time: {time_full_ilp:.4f} seconds")
-
-        print("-" * 70)
+        print(f"Greedy profit: {profit_greedy}, time: {time_greedy:.4f}s")
+        print(f"ILP profit: {ilp_obj_val}, time: {time_full_ilp:.4f}s")
+        print(f"RL profit: {q_val}, time: {q_time:.4f}s")
+        print(
+            f"RL stopping criterion (items selected by greedy): {stopping_criterion}"
+        )

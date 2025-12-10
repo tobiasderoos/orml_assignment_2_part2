@@ -1,49 +1,97 @@
 # RL Hyper-Heuristic for Greedy–ILP Threshold Selection
 
-This module applies Q-learning to determine how many items the greedy heuristic should select before switching to the ILP solver in the Quadratic Knapsack Problem (QKP).  
-The goal is to learn an adaptive stopping criterion that improves solution quality while keeping ILP computation time low.
+This module applies **Q-learning** to determine how many items the greedy heuristic should select before switching to the ILP solver in the **Quadratic Knapsack Problem (QKP)**.  
+The goal is to learn an **adaptive stopping criterion** that improves solution quality while keeping ILP computation time low.
 
-The agent makes only one decision per episode:  
+The agent makes only **one** decision per episode:  
 select the greedy threshold \(k\) at the start, based on the observed instance characteristics.  
-After this decision, the greedy phase and ILP phase run automatically.
+After this, the greedy phase and ILP phase run automatically.
+
+---
+
+## Greedy Heuristic
+
+The greedy heuristic selects, at each step, the item with the highest **adjusted profit-to-weight ratio**:
+
+\[
+\text{best\_item} = \arg\max_{i \in \text{candidates}}
+\frac{p_i + m_i}{w_i}
+\]
+
+where  
+- \(p_i\) = base profit of item \(i\)  
+- \(w_i\) = weight of item \(i\)  
+- \(m_i\) = marginal profit of item \(i\)
+
+### Marginal Profit
+
+\[
+m_i = \sum_{j \in \text{selected}} q_{ij}
+\]
+
+where \(q_{ij}\) represents the quadratic (pairwise) profit contribution between items \(i\) and \(j\).
 
 ---
 
 ## States
 
-The state represents coarse instance characteristics that influence the optimal stopping threshold.
+The state encodes instance characteristics that influence the optimal stopping threshold.
 
-### Current implementation
+### 1. Theoretical Capacity
 
-### Theoretical capacity
-- Compute the average item weight.
-- Compute the theoretical capacity:
-  \[
-  T = \frac{W}{\bar{w}}
-  \]
-- Discretize \(T\) into 5 buckets to ensure balanced visitation during training.
+1. Compute average item weight:  
+\[
+\bar{w} = \frac{1}{n}\sum_{i=1}^n w_i
+\]
 
-A larger theoretical capacity implies that more items can fit in the knapsack, so a larger greedy threshold is often beneficial.
+2. Compute theoretical capacity:  
+\[
+T = \frac{W}{\bar{w}}
+\]
 
-# Fraction high state
+3. Discretize \(T\) into 3 buckets (33rd and 66th percentile).
 
-Fraction items with a high profit/weight ratio. The higher the fracitons, the better greedy works. 
+A larger \(T\) implies more items fit, suggesting a larger stopping threshold.
 
+### 2. Fraction of High Profit/Weight Items
+
+Compute  
+\[
+r_i = \frac{p_i}{w_i}
+\]
+
+Let \(\bar{r}\) be the mean ratio and discretize into 3 buckets.
+
+The higher \(\bar{r}\), the better greedy tends to perform.
+
+### Combined State
+
+\[
+\text{state} = \text{ratio\_bin} \times 3 + \text{capacity\_bin}
+\]
+
+→ 9 total states.
 
 ---
 
 ## Actions
 
-Actions specify the number of greedy selections before switching to ILP: {5, 10, 15 ... 100}
+Actions specify how many greedy selections before switching to ILP:
 
-May not produce the best optimal threshold, but: 
-If the optimum is for example 17, the model should pick 15 as this would also give the optimal solution, only take a bit longer to compute as you have two more items for the ILP to solve.
+\[
+k \in \{5, 10, 20, 30, 50\}
+\]
 
 ### Rationale
-- Using increments of 5 significantly reduces computational cost, and accelerates convergence.
-- These thresholds still cover the full practical range of early vs. late ILP intervention.
+
+- Coarse thresholds reduce computation time.
+- ILP corrects remaining choices, so exact threshold values are not required.
+- Choosing \(k = 15\) when the optimum is \(17\) yields the same ILP solution, with small overhead.
 
 ---
+
+
+
 
 ## Rewards
 
@@ -58,6 +106,7 @@ Rewards are normalized using full ILP solution and Greedy-only soluiton:
 ### Negative reward
 Negative rewards are assigned when:
 - ILP finds **no feasible solution** --> negative reward 2
+- if ILP ecxeeds the time limit of 15 seconds --> negative reward of 0.5 
 
 ### Timing reward / penalty
 
@@ -77,8 +126,8 @@ Reward solutions that are:
 
 ## Q-Learning Parameters
 
-- **α (alpha)** – learning rate  
-- **ε (epsilon)** – exploration probability  
+- **α (alpha)** – learning rate  set to 0.25 . High learning rate as there is no ...
+- **ε (epsilon)** – exploration probability 
 - **ε-decay** – gradually reduces exploration  
 - No discount factor γ is needed, as each episode consists of a **single decision**.
 

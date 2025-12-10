@@ -8,6 +8,12 @@ from gurobipy import GRB
 import time
 import shutil
 from torch.utils.tensorboard import SummaryWriter
+# import hashlib
+# import os
+
+
+import matplotlib.pyplot as plt
+import numpy as np
 
 
 # ---------------------------------------------------------------------
@@ -33,6 +39,10 @@ class QLearning:
         shutil.rmtree("logs_exc1", ignore_errors=True)
         os.makedirs("logs_exc1", exist_ok=True)
 
+        os.makedirs("exc_1_model", exist_ok=True)
+        # self.full_ilp_cache_dir = "exc_1_cache"
+        # os.makedirs(self.full_ilp_cache_dir, exist_ok=True)
+
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.writer = SummaryWriter(log_dir=f"logs_exc1/run_{run_id}")
         self.reset_params = reset_params
@@ -46,7 +56,7 @@ class QLearning:
 
         # Actions: stopping criterion values (number of items to select in greedy)
         # Here: 5, 10, ..., 95
-        self.actions = list(range(15, 120, 15))
+        self.actions = [5, 10, 20, 30, 50]
 
         # States: based on instance characteristics
         self.n_states = 9
@@ -55,7 +65,7 @@ class QLearning:
         self.q_table = np.zeros((self.n_states, len(self.actions)))
 
         # Q-learning
-        self.alpha = 0.1  # Learning rate
+        self.alpha = 0.25  # Learning rate
         self.epsilon = 1.0  # Exploration rate (starts high)
         self.epsilon_decay = 0.9975
         self.epsilon_min = 0.05
@@ -66,13 +76,15 @@ class QLearning:
         # Reset
 
         # Caches
-        self.full_ilp_cache = {}
+        # self.full_ilp_cache = {}
         self.reduced_ilp_cache = {}
 
         self.all_episode_rewards = []
         self.all_episode_optimality = []
+        self.all_episode_rilp = []
         self.epsilon_history = []
         self.q_value_history = []
+        self.diff_history = []
 
     def _save(self):
         with open(f"{self.model_pkl}", "wb") as f:
@@ -160,17 +172,6 @@ class QLearning:
         state = self.calculate_state(ratio_bin, capacity_bin)
         return state
 
-    def solve_full_ilp_cache(self, filepath, weights, profits, quad, capacity):
-        """
-        Solve full ILP and cache results.
-        """
-        if filepath in self.full_ilp_cache:
-            return self.full_ilp_cache[filepath]
-        else:
-            obj_val, x, status = solve_ilp(weights, profits, quad, capacity)
-            self.full_ilp_cache[filepath] = (obj_val, x, status)
-            return obj_val, x, status
-
     def solve_rilp_cache(
         self,
         filepath,
@@ -215,20 +216,21 @@ class QLearning:
         self.q_table[state, action_idx] = current_q + self.alpha * (
             reward - current_q
         )
+        self.diff_history.append(reward - current_q)
 
-    def compute_reward(self, full_profit, greedy_profit, rilp_profit):
+    def compute_reward(self, greedy_profit, rilp_profit):
         if rilp_profit is None:
             return -2.0
         else:
-            return (rilp_profit - greedy_profit) / (full_profit - greedy_profit)
-
-    def compute_time_penalty(self, t, time_limit=15, beta=0.1):
-        return -beta * (t / time_limit)
+            return ((rilp_profit / greedy_profit) - 1.0) * 100
 
     def compute_penalty_model_status(self, status):
-        if status in [GRB.Status.TIME_LIMIT, GRB.Status.INFEASIBLE]:
-            return -1.0
-        return 0.0
+        if status in [GRB.Status.TIME_LIMIT]:
+            return -0.5
+        elif status == GRB.Status.INFEASIBLE:
+            return -2.0
+        else:
+            return 0.0
 
     # Training loop
     def train(self, n_episodes=10):
@@ -248,46 +250,73 @@ class QLearning:
             action_idx = self.choose_action(state)
             stopping_criterion = self.actions[action_idx]
 
-            # Greedy
-            selected_greedy = greedy_qkp(
-                weights,
-                profits,
-                capacity,
-                stopping_criterion=stopping_criterion,
-            )
-            greedy_profit = compute_profit(selected_greedy, profits, quad)
-
-            # Full ILP cached
-            ilp_obj_val, _, _ = self.solve_full_ilp_cache(
-                filepath, weights, profits, quad, capacity
-            )
-
-            # Reduced ILP
-            start = time.time()
-            rilp_obj_val, _, rilp_status = self.solve_rilp_cache(
-                filepath,
+            # Greedy without stopping criterion
+            selected_greedy_no_stop = greedy_qkp(
                 weights,
                 profits,
                 quad,
                 capacity,
-                selected_greedy,
-                stopping_criterion,
+                stopping_criterion=None,
             )
-            end = time.time()
-
-            # Rewards and penalties
-            reward = self.compute_reward(
-                full_profit=ilp_obj_val,
-                greedy_profit=greedy_profit,
-                rilp_profit=rilp_obj_val,
+            greedy_profit = compute_profit(
+                selected_greedy_no_stop, profits, quad
             )
 
-            reward += self.compute_time_penalty(end - start)
-            reward += self.compute_penalty_model_status(rilp_status)
+            # --------
+            # Q LEARNING ACTION!
+            # --------
+            # Greedy
+            selected_greedy = greedy_qkp(
+                weights,
+                profits,
+                quad,
+                capacity,
+                stopping_criterion=stopping_criterion,
+            )
+            # Check if still capacity left
+            remaining_capacity = capacity - sum(
+                weights[i] for i in selected_greedy
+            )
+            candidates = [
+                i
+                for i in range(n)
+                if i not in selected_greedy and weights[i] <= remaining_capacity
+            ]
+            if not candidates:
+                # no more items fit, skip RILP
+                print("No remaining capacity after greedy, skipping RILP.")
+                # q_val = compute_profit(selected_greedy, profits, quad)
+                reward = -1.0
+                rilp_obj_val = greedy_profit
+                rilp_status = GRB.Status.OPTIMAL
+            else:
+                print("Solving RILP after greedy selection...")
+                # Reduced ILP
+                start = time.time()
+                rilp_obj_val, _, rilp_status = self.solve_rilp_cache(
+                    filepath,
+                    weights,
+                    profits,
+                    quad,
+                    capacity,
+                    selected_greedy,
+                    stopping_criterion,
+                )
+                end = time.time()
+                print(f"RILP: {rilp_obj_val}, greedy: {greedy_profit}")
+                print(f"Ratio: {(rilp_obj_val / greedy_profit) - 1}")
+                # Rewards and penalties
+                reward = self.compute_reward(
+                    greedy_profit=greedy_profit,
+                    rilp_profit=rilp_obj_val,
+                )
+                # print(f"Ratio reward: {reward}")
+
+                reward += self.compute_penalty_model_status(rilp_status)
 
             self.all_episode_rewards.append(reward)
             self.all_episode_optimality.append(
-                (rilp_obj_val - greedy_profit) / (ilp_obj_val - greedy_profit)
+                (rilp_obj_val / greedy_profit) - 1
             )
 
             self.epsilon_history.append(self.epsilon)
@@ -305,6 +334,7 @@ class QLearning:
                     f"\nEpisode {episode + 1}/{n_episodes} - "
                     f"Avg Reward: {np.mean(self.all_episode_rewards[-5:]):.4f}, "
                     f"Avg Relative Profit: {np.mean(self.all_episode_optimality[-5:]):.4f}, "
+                    f"Avg Q-Value Diff: {np.mean(self.diff_history[-5:]):.4f}, "
                     f"Epsilon: {self.epsilon:.4f}"
                 )
 
@@ -348,10 +378,6 @@ class QLearning:
         self.writer.close()
 
         return self
-
-
-import matplotlib.pyplot as plt
-import numpy as np
 
 
 def plot_qlearning_diagnostics(agent, alpha=0.1, save_path=None):
@@ -472,7 +498,6 @@ if __name__ == "__main__":
         greedy_qkp,
         compute_profit,
         solve_reduced_ilp,
-        solve_ilp,
     )
 
     instance_folder = "InstancesEx1_200"
@@ -489,7 +514,7 @@ if __name__ == "__main__":
     )
 
     # Train on instances
-    agent.train(n_episodes=500)
+    agent.train(n_episodes=1000)
 
     # Save the trained model
     agent._save()
