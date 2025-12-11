@@ -9,136 +9,193 @@ After this, the greedy phase and ILP phase run automatically.
 
 ---
 
-## Greedy Heuristic
+# Greedy Heuristic
 
-The greedy heuristic selects, at each step, the item with the highest **adjusted profit-to-weight ratio**:
+The greedy heuristic selects items using the marginal linear profit-to-weight ratio:
 
-\[
-\text{best\_item} = \arg\max_{i \in \text{candidates}}
-\frac{p_i + m_i}{w_i}
-\]
+score(i) = (p_i + Σ_{j∈selected} q_{ij}) / w_i
 
-where  
-- \(p_i\) = base profit of item \(i\)  
-- \(w_i\) = weight of item \(i\)  
-- \(m_i\) = marginal profit of item \(i\)
-
-### Marginal Profit
-
-\[
-m_i = \sum_{j \in \text{selected}} q_{ij}
-\]
-
-where \(q_{ij}\) represents the quadratic (pairwise) profit contribution between items \(i\) and \(j\).
+It selects the item with the highest score and continues until:
+- capacity is full, or  
+- the agent-specified stopping threshold *k* is reached.
 
 ---
 
-## States
+# Actions — Stopping Thresholds
 
-The state encodes instance characteristics that influence the optimal stopping threshold.
+The agent chooses:
 
-### 1. Theoretical Capacity
+k ∈ {10, 15, 20, …, 100}
 
-1. Compute average item weight:  
-\[
-\bar{w} = \frac{1}{n}\sum_{i=1}^n w_i
-\]
+This gives 21 discrete actions each representing “stop greedy after k items.”
 
-2. Compute theoretical capacity:  
-\[
-T = \frac{W}{\bar{w}}
-\]
+Small k:
+- ILP has more flexibility  
+- ILP takes more time, can take longer than 15 seconds. Hence, this may result in a suboptimal solution. 
 
-3. Discretize \(T\) into 3 buckets (33rd and 66th percentile).
+Large k:
+- greedy dominates and ILP has less correction ability. Also results in a suboptimal solution, closer to greedy solution than optimal ILP solution.
 
-A larger \(T\) implies more items fit, suggesting a larger stopping threshold.
-
-### 2. Fraction of High Profit/Weight Items
-
-Compute  
-\[
-r_i = \frac{p_i}{w_i}
-\]
-
-Let \(\bar{r}\) be the mean ratio and discretize into 3 buckets.
-
-The higher \(\bar{r}\), the better greedy tends to perform.
-
-### Combined State
-
-\[
-\text{state} = \text{ratio\_bin} \times 3 + \text{capacity\_bin}
-\]
-
-→ 9 total states.
+The aim is to learn the threshold that works best per instance. This could improve the ILP solution with 15 seconds time limit in theory. 
 
 ---
 
-## Actions
+# State Representation (21 Features)
 
-Actions specify how many greedy selections before switching to ILP:
+The model uses a **21-dimensional feature vector** summarizing instance characteristics:
 
-\[
-k \in \{5, 10, 20, 30, 50\}
-\]
+### Weight statistics
+- mean weight  
+- median weight  
+- standard deviation  
+- coefficient of variation  
+- min/max ratio  
 
-### Rationale
+### Capacity structure
+- capacity / mean weight  
+- capacity / median weight  
+- fraction of items lighter than mean  
 
-- Coarse thresholds reduce computation time.
-- ILP corrects remaining choices, so exact threshold values are not required.
-- Choosing \(k = 15\) when the optimum is \(17\) yields the same ILP solution, with small overhead.
+### Profit/weight structure
+- mean (p/w)  
+- median (p/w)  
+- std (p/w)  
 
----
+### Quadratic structure
+- mean q_ij  
+- std q_ij  
+- 90th percentile of q_ij  
 
+### One-hot categorical bins
+- 3-bin profit/weight ratio category  
+- 3-bin capacity category  
 
+### Size feature
+- log(n)
 
-
-## Rewards
-
-Rewards evaluate the quality of the combined greedy + ILP solution.
-
-### Reward scaling
-Rewards are normalized using full ILP solution and Greedy-only soluiton:
-- **Full ILP solution** → reward = 1  
-- **Greedy-only solution** → reward = 0  
-- **Reduced ILP solution (RILP)** → reward in (0, 1): RILP / (full_ILP - Greedy)
-
-### Negative reward
-Negative rewards are assigned when:
-- ILP finds **no feasible solution** --> negative reward 2
-- if ILP ecxeeds the time limit of 15 seconds --> negative reward of 0.5 
-
-### Timing reward / penalty
-
-Because a faster ILP solve is preferable, reward incorporates a small penalty for runtime:
-
-The closer to 15 secondds, the better. Greedy heuristic is baseline, 15 seconds is upper limit. 
-
-This should ensure that higher thresholds are preferred over lower thresholds, even if they give the same optimal value. 
-
-### Goal
-Reward solutions that are:
-- close to the full ILP optimum,
-- found within the time limit,
-- produced using an appropriate greedy–ILP split.
+The feature vector is fed into a neural network.
 
 ---
 
-## Q-Learning Parameters
+# Neural Q-Network
 
-- **α (alpha)** – learning rate  set to 0.25 . High learning rate as there is no ...
-- **ε (epsilon)** – exploration probability 
-- **ε-decay** – gradually reduces exploration  
-- No discount factor γ is needed, as each episode consists of a **single decision**.
+Architecture:
 
-### Effective update rule
-Since the problem is a contextual bandit, the Q-update simplifies to:
+Input(21)  
+→ Dense(64, relu)  
+→ Dense(32, relu)  
+→ Dense(21, linear)  (one Q-value per action)
 
-\[
-Q(s,a) \leftarrow Q(s,a) + \alpha \big( r - Q(s,a) \big)
-\]
+The update rule is contextual-bandit style:
 
-This update moves Q(s, a) toward the observed reward, learning the expected performance of each threshold under different instance characteristics.
+Q(s, a) ← reward
+
+because each episode consists of a single decision; no discount factor is required.
+
+---
+
+# Reward Function
+
+Let:
+- G = greedy-only profit  
+- R = reduced ILP profit  
+
+Base reward:
+
+reward = (R / G − 1) × 100
+
+Examples:
+- ILP improves greedy by 5% → reward = +5  
+- ILP equals greedy → reward = 0  
+
+### Penalties
+- ILP infeasible → −2.0  
+- ILP hits time limit → −0.5  
+- Greedy profit ≤ 0 → −2.0  
+
+This encourages:
+- ILP improvements  
+- stability  
+- feasible ILP solves  
+- reasonable runtimes  
+
+---
+
+# ILP Caching
+
+Reduced ILP calls are memoized:
+
+cache[(filepath, threshold, fixed_items)] → (objective, solution, status)
+
+This speeds up training significantly by avoiding repeated ILP solves.
+
+---
+
+# Exploration
+
+ε-greedy strategy:
+- Start ε = 1.0  
+- Decay per episode: ε ← ε × 0.9975  
+- Minimum ε = 0.05  
+
+The agent gradually shifts from exploration to exploitation.
+
+---
+
+# Convergence Metrics
+
+Logged to TensorBoard:
+
+- action entropy (distribution concentration)  
+- policy stability (changes in argmax(Q))  
+- exploitation rate  
+- top-3 action reward vs others  
+- reward improvement over rolling windows  
+- Q-value spread (range of Q-values across actions)  
+
+These help diagnose when the policy stabilizes.
+
+---
+
+# Diagnostic Plots
+
+The plotting script provides:
+- reward and optimality curves  
+- epsilon decay  
+- Q-value statistics  
+- heatmap of action distributions  
+- policy stability curves  
+- reward-by-action bar charts  
+- TD-error magnitudes  
+
+---
+
+# Training Workflow
+
+Example:
+
+agent = NeuralBanditQLearning(instance_files, reset_params=True, model_name="exc_1_model/qkeras_model")  
+agent.train(n_episodes=1000)  
+print_convergence_summary(agent)  
+plot_qlearning_diagnostics(agent)
+
+The system saves:
+- the neural model (.keras)  
+- training parameters (.yaml)  
+- plots and TensorBoard logs  
+
+---
+
+# Summary
+
+This module implements a **neural contextual bandit hyper-heuristic** that learns when to stop the greedy heuristic and hand off to ILP in QKP. It uses:
+- rich statistical features,  
+- a neural Q-function,  
+- ILP caching,  
+- structured reward shaping,  
+- detailed convergence tracking.  
+
+The result is an adaptive, data-driven thresholding strategy that improves greedy–ILP hybrid performance across instances.
 
 
 # Exc 2 

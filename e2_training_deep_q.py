@@ -48,7 +48,12 @@ def greedy_heuristic(weights, profits, quad, capacity):
 
 class QEnv(gym.Env):
     """
-    Gymnasium environment for the QPS with improved reward normalization.
+    Gymnasium environment for the quadratic knapsack/QPS problem.
+
+    - State: rich feature vector of items + remaining capacity.
+    - Actions: pick an item (0..n-1).
+    - Episode ends when no more items fit.
+    - Reward: terminal-only, based on profit vs greedy baseline.
     """
 
     metadata = {"render_modes": ["human"]}
@@ -70,14 +75,13 @@ class QEnv(gym.Env):
         self.instance_id = instance_id
         self.step_count = 0
 
-        # Normalization factors
-        self.max_w = np.max(self.weights)
-        self.max_p = np.max(self.profits)
-        self.max_q = np.max(np.triu(self.quad, k=1))
+        # --- Normalization factors (robust) ---
+        self.max_w = float(np.max(self.weights))
+        self.max_p = float(np.max(self.profits))
+        self.max_q = float(np.max(np.triu(self.quad, k=1)))
 
-        self.max_gain = np.max(self.profits + np.sum(self.quad, axis=1))
-
-        # Observation space
+        self.max_gain = float(np.max(self.profits + np.sum(self.quad, axis=1)))
+        # Observation space size (same structure as before)
         obs_size = 11 * self.n + 2
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(obs_size,), dtype=np.float32
@@ -92,127 +96,167 @@ class QEnv(gym.Env):
         self.current_profit = 0.0
         self.current_reward = 0.0
 
-        # Compute greedy profit
+        # Greedy baseline
         self.greedy_profit, self._marginal_profits = greedy_heuristic(
             self.weights, self.profits, self.quad, self.capacity
         )
 
-    def reset(self, *, seed=None):
+    # ------------------------------------------------------------------ #
+    # Gym API
+    # ------------------------------------------------------------------ #
+
+    def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
 
         self.selected = np.zeros(self.n, dtype=np.int32)
-        self.available = np.ones(self.n, dtype=bool)
         self.remaining_capacity = self.capacity
         self.current_weight = 0.0
         self.current_profit = 0.0
+        self.current_reward = 0.0
         self.step_count = 0
-        return self._get_obs(), {}
+
+        # Initially, any item that fits and is not selected is available
+        fits = self.weights <= self.remaining_capacity
+        self.available = (self.selected == 0) & fits
+
+        obs = self._get_obs()
+        return obs, {}
 
     def step(self, action):
         info = {"instance_id": self.instance_id}
         terminated = False
         truncated = False
 
+        # Validate action
         if (
-            self.selected[action] == 1
+            action < 0
+            or action >= self.n
+            or self.selected[action] == 1
             or self.weights[action] > self.remaining_capacity
         ):
             info["warning"] = "invalid_action_reached"
-            print("Warning: Invalid action.")
+            print("Warning: Invalid action.", action)
             raise ValueError("Invalid action taken in QEnv.")
 
-        # Calculate marginal profit
-        marginal = self._marginal_profit(action)
-        # Calculate marginal profit using internal step counter
-        marginal = self._marginal_profit(action)
-        greedy_marginal = (
-            self._marginal_profits[self.step_count]
-            if self.step_count < len(self._marginal_profits)
-            else 1.0
-        )
-        eps = 1e-6
-        ratio = (marginal - greedy_marginal) / (abs(greedy_marginal) + eps)
-        ratio = np.clip(ratio, -1.0, +1.0)
-        reward = ratio
-        # Apply selection
+        # --- Apply selection ---
         self.selected[action] = 1
-        self.available[action] = 0
-        self.remaining_capacity -= self.weights[action]
-        self.current_weight += self.weights[action]
-        self.current_reward += reward
-        self.available = (
-            (self.selected == 0) & (self.weights <= self.remaining_capacity)
-        ).astype(np.float32)
+        self.remaining_capacity -= float(self.weights[action])
+        self.current_weight += float(self.weights[action])
+
+        # Update feasible mask
+        fits = self.weights <= self.remaining_capacity
+        self.available = (self.selected == 0) & fits
 
         self.step_count += 1
-        # Check termination
+
+        # --- Terminal-only reward ---
+        step_reward = 0.0  # we do not use step-wise shaping here
+
         if not np.any(self.available):
+            # Episode ends: compute final profit and reward
             terminated = True
             final_profit = compute_profit(
                 self.selected, self.profits, self.quad
             )
-            terminal_reward = (final_profit / self.greedy_profit) - 1
-            terminal_reward *= 10
-            terminal_reward = np.clip(terminal_reward, -10, +10)
+            self.current_profit = float(final_profit)
+
+            # Optimality ratio vs greedy baseline
+            if self.greedy_profit > 0:
+                optimality_ratio = float(final_profit / self.greedy_profit)
+            else:
+                optimality_ratio = 0.0
+
+            # Shaped terminal reward (centered at 0 when equal to greedy)
+            # reward = beta * (opt - 1), clipped
+            beta = 5.0
+            terminal_reward = beta * (optimality_ratio - 1.0)
+            terminal_reward = float(np.clip(terminal_reward, -10.0, 10.0))
+
+            reward = step_reward + terminal_reward
 
             info["reason"] = "no_feasible_items"
-            info["optimality_ratio"] = terminal_reward
-            info["reward ratios"] = reward / terminal_reward
-            reward += terminal_reward
-        return self._get_obs(), reward, terminated, truncated, info
+            info["optimality_ratio"] = optimality_ratio
+            info["final_profit"] = float(final_profit)
+        else:
+            reward = step_reward
+
+        self.current_reward += reward
+
+        obs = self._get_obs()
+        return obs, float(reward), terminated, truncated, info
+
+    # ------------------------------------------------------------------ #
+    # Helpers
+    # ------------------------------------------------------------------ #
 
     def _marginal_profit(self, i):
+        """(Kept for compatibility, not used in reward now.)"""
         selected_items = np.where(self.selected == 1)[0]
         lin_profit = self.profits[i]
         if len(selected_items) == 0:
-            return lin_profit
-        return lin_profit + np.sum(self.quad[i, selected_items])
+            return float(lin_profit)
+        return float(lin_profit + np.sum(self.quad[i, selected_items]))
+
+    def _rank_normalized(self, x):
+        """Return ranks in [0,1], robust for n <= 1."""
+        x = np.asarray(x)
+        n = len(x)
+        if n <= 1:
+            return np.zeros_like(x, dtype=np.float32)
+        ranks = np.argsort(np.argsort(x))
+        return (ranks / (n - 1)).astype(np.float32)
 
     def _get_obs(self):
-        fits = (self.weights <= self.remaining_capacity).astype(np.float32)
+        """Build rich feature vector for all items + global scalars."""
+        # Feasibility mask (bool)
+        fits = self.weights <= self.remaining_capacity
 
+        # --- Normalized basic features ---
         norm_w = (self.weights / self.max_w).astype(np.float32)
         norm_p = (self.profits / self.max_p).astype(np.float32)
 
+        # Profit/weight ratio
         pw_ratio = self.profits / self.weights
         pw_ratio = (pw_ratio / pw_ratio.max()).astype(np.float32)
 
-        self.available = ((self.selected == 0) & (fits == 1)).astype(bool)
+        self.available = (self.selected == 0) & fits
 
+        # Marginal profit vector
         selected_items = np.where(self.selected == 1)[0]
         if len(selected_items) == 0:
-            marginal_profit_vector = self.profits / self.max_p
-        else:
-            marginal_profit_vector = self.profits / self.max_p + (
-                self.quad[:, selected_items].sum(axis=1) / self.max_q
+            marginal_profit_vector = (self.profits / self.max_p).astype(
+                np.float32
             )
-            marginal_profit_vector[selected_items] = 0.0  # to be sure
-            marginal_profit_vector = marginal_profit_vector.astype(np.float32)
-        # average quadratic profit of available items
+        else:
+            quad_contrib = self.quad[:, selected_items].sum(axis=1) / self.max_q
+            marginal_profit_vector = (
+                self.profits / self.max_p + quad_contrib
+            ).astype(np.float32)
+            marginal_profit_vector[selected_items] = 0.0
+
+        # Average quadratic interaction per item (no diagonal)
         quad_no_diag = self.quad.copy()
-        np.fill_diagonal(quad_no_diag, 0)
+        np.fill_diagonal(quad_no_diag, 0.0)
         avg_quad_int = quad_no_diag.mean(axis=1)
-        avg_quad_int = avg_quad_int / self.max_q
 
-        def rank_normalized(x):
-            return np.argsort(np.argsort(x)) / (len(x) - 1)
+        avg_quad_int = (avg_quad_int / self.max_q).astype(np.float32)
 
-        profit_rank = rank_normalized(self.profits)
-        weight_rank = rank_normalized(self.weights)
-        pw_rank = rank_normalized(self.profits / self.weights)
-        avg_quad_int_rank = rank_normalized(avg_quad_int)
+        # Rank-based features
+        profit_rank = self._rank_normalized(self.profits)
+        weight_rank = self._rank_normalized(self.weights)
+        pw_rank = self._rank_normalized(pw_ratio)
+        avg_quad_int_rank = self._rank_normalized(avg_quad_int)
 
+        # Global scalars
         remaining_cap = self.remaining_capacity / self.capacity
+
         items_left = np.sum(self.available) / self.n
 
-        scalars = np.array(
-            [remaining_cap, items_left],
-            dtype=np.float32,
-        )
+        scalars = np.array([remaining_cap, items_left], dtype=np.float32)
 
-        return np.concatenate(
+        obs = np.concatenate(
             [
-                self.available,  # n
+                self.available.astype(np.float32),  # n
                 fits.astype(np.float32),  # n
                 norm_w,  # n
                 norm_p,  # n
@@ -223,9 +267,10 @@ class QEnv(gym.Env):
                 weight_rank,  # n
                 pw_rank,  # n
                 avg_quad_int_rank,  # n
-                scalars,  # 2 scalars
+                scalars,  # 2
             ]
-        )
+        ).astype(np.float32)
+        return obs
 
 
 class QAgent:
@@ -239,12 +284,12 @@ class QAgent:
         tau=0.005,
         epsilon=1.0,
         epsilon_min=0.05,
-        epsilon_decay=0.9995,
-        lr=0.0001,
+        epsilon_decay=0.981,
+        lr=0.00001,
         batch_size=256,
         memory_size=25000,
         target_update_interval=250,
-        warmup_steps=1000,
+        warmup_steps=50,
     ):
         self.state_size = state_size
         self.action_size = action_size
@@ -302,12 +347,15 @@ class QAgent:
         model = models.Sequential(
             [
                 layers.Input(shape=(self.state_size,)),
-                layers.Dense(512, activation="relu"),
-                layers.Dense(512, activation="relu"),
+                layers.Dense(256, activation="relu"),
+                layers.Dense(256, activation="relu"),
                 layers.Dense(self.action_size, activation="linear"),
             ]
         )
-        model.compile(optimizer=optimizers.Adam(learning_rate=lr), loss="mse")
+        model.compile(
+            optimizer=optimizers.Adam(learning_rate=lr, clipnorm=1.0),
+            loss=tf.keras.losses.Huber(delta=1.0),
+        )
         return model
 
     def _get_q_values(self, state, feasible_mask):
@@ -346,15 +394,15 @@ class QAgent:
 
             action = self.select_greedy_action(state, env.available)
             state, reward, terminated, _, info = env.step(action)
-            total_reward += reward
+            total_reward += float(reward)
 
             if terminated:
                 break
 
         final_profit = compute_profit(env.selected, env.profits, env.quad)
-        optimality_ratio = final_profit / env.greedy_profit
+        optimality_ratio = float(final_profit / env.greedy_profit)
 
-        return total_reward, final_profit, optimality_ratio
+        return float(total_reward), float(final_profit), float(optimality_ratio)
 
     def remember(self, state, action, reward, next_state, done, next_feasible):
         """Store experience"""
@@ -393,10 +441,11 @@ class QAgent:
 
         q_original = q_current.copy()
         td_errors = []
+
         for idx, (s, a, r, s2, done, feas2) in enumerate(batch):
             old_q = q_original[idx, a]
             if done:
-                target = r
+                target = float(r)
             else:
                 # 1) online network selects best next action
                 q_online_masked = q_next_online[idx].copy()
@@ -405,8 +454,11 @@ class QAgent:
                 a_online = np.argmax(q_online_masked)
 
                 # 2) target network evaluates that action
-                target = r + self.gamma * q_next_target[idx, a_online]
-            td_errors.append(abs(old_q - target))
+                target = float(r) + self.gamma * float(
+                    q_next_target[idx, a_online]
+                )
+            td_error = float(abs(old_q - target))
+            self.td_error_history.append(td_error)
             q_current[idx, a] = target
         # self.memory.update_priorities(indices, td_errors)
 
@@ -570,11 +622,12 @@ def train_episode(env, agent):
 
 def train(
     instance_files,
-    num_episodes=1000,
+    num_episodes=200,
     save_path="exc2.keras",
     max_instances=None,
     print_interval=10,
     agent=None,
+    single_instance=False,
 ):
     """Main training loop"""
 
@@ -602,8 +655,11 @@ def train(
 
     # Training loop
     for episode in tqdm.tqdm(range(num_episodes)):
-        # Pick random instance
-        env = random.choice(envs)
+        if single_instance:
+            env = envs[0]
+        else:
+            # Pick random instance
+            env = random.choice(envs)
 
         # Train one episode
         td_errors = train_episode(env, agent)
@@ -763,7 +819,7 @@ def plot_rl_diagnostics(agent, alpha=0.1, save_path=None):
 
 
 def load_agent(model_path, example_env):
-    """Recreate an agent with the right architecture and load weights."""
+    """Load an agent with the right architecture and load weights."""
     agent = QAgent(
         state_size=example_env.observation_space.shape[0],
         action_size=example_env.action_space.n,
@@ -812,26 +868,30 @@ def evaluate_agent_on_instances(agent, instance_files):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    instance_folder = "InstancesEx2_test/"
+    instance_folder = "InstancesEx2/"
     instance_files = sorted(
         os.path.join(instance_folder, f)
         for f in os.listdir(instance_folder)
-        if os.path.isfile(os.path.join(instance_folder, f))
+        if os.path.isfile(
+            os.path.join(instance_folder, f) and f.endswith(".txt")
+        )
     )
 
     # Train
     agent = train(
         instance_files=instance_files[:5],
-        num_episodes=10000,
+        num_episodes=150,
         save_path="exc_2_model/phase1.keras",
+        max_instances=1,
+        single_instance=True,
     )
 
-    agent = train(
-        instance_files=instance_files[5:15],
-        num_episodes=15000,
-        save_path="exc_2_model/phase2.keras",
-        agent=agent,
-    )
+    # agent = train(
+    #     instance_files=instance_files[5:15],
+    #     num_episodes=15000,
+    #     save_path="exc_2_model/phase2.keras",
+    #     agent=agent,
+    # )
 
     for alpha in [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5]:
         plot_rl_diagnostics(
@@ -840,13 +900,13 @@ if __name__ == "__main__":
             save_path=f"exc_2_plots/training_diagnostics_alpha{alpha}.png",
         )
 
-    # Rebuild agent for testing loading
-    n, cap, w, q = read_instance(instance_files[0])
-    p = [q[i][i] for i in range(n)]
-    example_env = QEnv(w, p, q, cap, instance_id=0)
+    # # Rebuild agent for testing loading
+    # n, cap, w, q = read_instance(instance_files[0])
+    # p = [q[i][i] for i in range(n)]
+    # example_env = QEnv(w, p, q, cap, instance_id=0)
 
-    # Load model
-    loaded_agent = load_agent("exc_2_model/test_model.keras", example_env)
+    # # Load model
+    # loaded_agent = load_agent("exc_2_model/test_model.keras", example_env)
 
-    # Evaluate over all instances
-    evaluate_agent_on_instances(loaded_agent, instance_files)
+    # # Evaluate over all instances
+    # evaluate_agent_on_instances(loaded_agent, instance_files)
