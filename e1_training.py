@@ -1,6 +1,7 @@
 import os
 import yaml
 import pickle
+import random
 import csv
 import shutil
 import tqdm
@@ -17,6 +18,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 import tensorflow as tf
 from tensorflow.keras import layers, models, optimizers
+
+from collections import deque
 
 from e1_testing import (
     read_instance,
@@ -61,15 +64,21 @@ class QLearning:
         self.model_yaml = f"{self.model_name}.yaml"
 
         # Actions
-        self.actions = np.arange(45, 95, 2).tolist()
+        self.actions = np.arange(65, 110, 3).tolist()
         self.n_actions = len(self.actions)
 
         # Hyperparameters
-        self.lr = 0.005
+        self.lr = 0.001
         self.epsilon = 1.0
-        self.epsilon_decay = 0.999
-        self.epsilon_min = 0.2
-        self.alpha = 0.2
+        self.epsilon_decay = 0.9975
+        self.epsilon_min = 0.05
+
+        self.replay_buffer = deque(maxlen=250)
+        self.batch_size = 32
+        self.warmup = 50
+
+        self.q_min = -5.0
+        self.q_max = 10.0
 
         # Build model
         self.feature_dim = 12
@@ -92,15 +101,15 @@ class QLearning:
     def build_model(self):
         inp = layers.Input(shape=(self.feature_dim,))
         x = layers.BatchNormalization()(inp)
-        x = layers.Dense(128, activation="relu")(inp)
+        x = layers.Dense(128, activation="relu")(x)
         x = layers.Dropout(0.1)(x)
         x = layers.Dense(64, activation="relu")(x)
         out = layers.Dense(self.n_actions, activation="linear")(x)
 
         model = models.Model(inputs=inp, outputs=out)
         model.compile(
-            optimizer=optimizers.Adam(self.lr),
-            loss="mse",
+            optimizer=optimizers.Adam(self.lr, clipnorm=1.0),
+            loss="huber",
         )
         print(model.summary())
         return model
@@ -150,10 +159,6 @@ class QLearning:
         w = np.array(weights, dtype=np.float32)
         p = np.array(profits, dtype=np.float32)
         Q = np.array(quad, dtype=np.float32)
-
-        # Upper triangle (excluding diagonal)
-        # Q_upper = np.triu(Q, k=1)
-        # q_vals = Q_upper[np.triu_indices(n, k=1)]
 
         # Profit/weight ratio
         pw = p / w
@@ -220,7 +225,7 @@ class QLearning:
 
     def _calculate_gini(self, array):
         """Calculate Gini coefficient of a numpy array."""
-        array = array.flatten()
+        array = np.sort(array.flatten())
         n = array.shape[0]
         cumulative_values = np.cumsum(array)
         gini = (2 * np.sum((np.arange(1, n + 1)) * array)) / (
@@ -254,7 +259,7 @@ class QLearning:
     def compute_reward(self, greedy_profit, rilp_profit):
         if rilp_profit is None:
             return -2.0
-        return ((rilp_profit / greedy_profit) - 1.0) * 30.0
+        return ((rilp_profit / greedy_profit) - 1.0) * 15.0
 
     def compute_penalty(self, status):
         if status == GRB.Status.TIME_LIMIT:
@@ -340,18 +345,31 @@ class QLearning:
                 reward = self.compute_reward(greedy_profit, rilp_obj)
                 reward += self.compute_penalty(status)
                 reward += self.compute_time_bonus(elapsed, status)
+            reward = np.clip(reward, self.q_min, self.q_max)
+            self.replay_buffer.append((feats.squeeze(), action_idx, reward))
+
+            # train from replay buffer
+            diff = 0.0
+
+            if ep > self.warmup:
+                batch = random.sample(self.replay_buffer, self.batch_size)
+
+                # Batch predict for efficiency
+                states = np.array([s for s, a, r in batch])
+                q_preds = self.model.predict(states, verbose=0)
+
+                for i, (s, a, r) in enumerate(batch):
+                    q_preds[i, a] = r  # Terminal state: target is just reward
+                q_preds = np.clip(q_preds, self.q_min, self.q_max)
+
+                self.model.train_on_batch(states, q_preds)
+
+            # Calculate diff for current episode
+            diff = reward - q_values[action_idx]
+            self.reward_q_diff.append(diff)
 
             self.all_episode_rewards.append(reward)
             self.epsilon_history.append(self.epsilon)
-
-            # Q-learning update
-            target = q_values.copy()
-            target[action_idx] = q_values[action_idx] + self.alpha * (
-                reward - q_values[action_idx]
-            )
-            diff = reward - q_values[action_idx]
-            self.reward_q_diff.append(diff)
-            self.model.train_on_batch(feats, target.reshape(1, -1))
 
             # Save Q-range metric
             self.q_value_history.append(q_values.max() - q_values.min())
@@ -376,15 +394,26 @@ class QLearning:
 
             with open(file_path, mode="a", newline="") as f:
                 writer = csv.writer(f)
-                # Write header only once
                 if not file_exists:
                     writer.writerow(
-                        ["episode", "epsilon", "reward", "diff", "best_action"]
+                        [
+                            "episode",
+                            "instance",
+                            "epsilon",
+                            "reward",
+                            "diff",
+                            "best_action",
+                        ]
                     )
-
-                # Append one row per episode
                 writer.writerow(
-                    [ep, self.epsilon, reward, diff, best_possible_action]
+                    [
+                        ep,
+                        filepath,
+                        self.epsilon,
+                        reward,
+                        diff,
+                        best_possible_action,
+                    ]
                 )
 
         print("\nTraining complete.")
