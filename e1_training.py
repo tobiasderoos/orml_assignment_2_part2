@@ -1,6 +1,7 @@
 import os
 import yaml
 import pickle
+import csv
 import shutil
 import tqdm
 import time
@@ -60,18 +61,18 @@ class QLearning:
         self.model_yaml = f"{self.model_name}.yaml"
 
         # Actions
-        self.actions = np.arange(50, 100, 2).tolist()
+        self.actions = np.arange(45, 95, 2).tolist()
         self.n_actions = len(self.actions)
 
         # Hyperparameters
         self.lr = 1e-3
         self.epsilon = 1.0
-        self.epsilon_decay = 0.997
+        self.epsilon_decay = 0.999
         self.epsilon_min = 0.2
         self.alpha = 0.2
 
         # Build model
-        self.feature_dim = 11
+        self.feature_dim = 12
 
         self.model = self.build_model()
 
@@ -144,72 +145,77 @@ class QLearning:
     # Feature engineering
 
     def extract_features(self, n, weights, profits, quad, capacity):
-        """ """
+        """feature engineering"""
 
         w = np.array(weights, dtype=np.float32)
         p = np.array(profits, dtype=np.float32)
         Q = np.array(quad, dtype=np.float32)
 
-        Q_upper = np.triu(Q, k=1)
-        q_vals = Q_upper[np.triu_indices(n, k=1)]
+        # Upper triangle (excluding diagonal)
+        # Q_upper = np.triu(Q, k=1)
+        # q_vals = Q_upper[np.triu_indices(n, k=1)]
 
         # Profit/weight ratio
         pw = p / w
         pw_mean = pw.mean()
         pw_std = pw.std()
-        pw_cv = pw_std / (pw_mean)
+        pw_cv = pw_std / pw_mean
         pw_skew = skew(pw)
         gini_pw = self._calculate_gini(pw)
 
-        # correlation profit weight
-        kendall_tau, _ = kendalltau(w, p)
+        # Correlation profit vs weight
+        pw_iw_corr = np.corrcoef(p, w)[0, 1]
 
-        # Interaction profit and weight
-        item_interaction = Q.sum(axis=1) - np.diag(Q)
-        iw = item_interaction / w
-        pw_iw_corr = np.corrcoef(pw, iw)[0, 1]
-
-        # Quadratic structure
-        q_mean = q_vals.mean()
-        q_std = q_vals.std()
-        q_cv = q_std / q_mean
-        interaction_skew = skew(q_vals)
-
-        # Quadratic linear ratio
-        quad_linear_ratio = q_vals.mean() / (p.mean() + 1e-6)
-
-        # Degree concentration
-        degrees = item_interaction
-        degree_concentration = degrees.max() / (degrees.mean())
-        # Capacity tightness
-        cap_tight_mean = capacity / (w.mean())
-
-        # How many greedy items fit
+        # Greedy packing
         sorted_indices = np.argsort(pw)[::-1]
         cumulative_weight = np.cumsum(w[sorted_indices])
-        items_that_fit = np.searchsorted(
-            cumulative_weight, capacity, side="right"
+        items_that_fit = int(
+            np.searchsorted(cumulative_weight, capacity, side="right")
         )
         fit_ratio = items_that_fit / n
+        cap_tight_mean = capacity / w.mean()
 
-        # Final feature vector
+        # Greedy margin statistics
+        m = items_that_fit
+        pw_sorted = np.sort(pw)[::-1][:m]
+
+        deltas = pw_sorted[:-1] - pw_sorted[1:]
+        delta_mean = deltas.mean()
+        delta_median = np.median(deltas)
+        delta_std = deltas.std()
+        delta_cv = delta_std / delta_mean if delta_mean != 0 else 0.0
+        delta_skew = skew(deltas)
+
+        # quadratic interaction effects basedd on greedy
+        greedy_items = sorted_indices[:m]
+        quad_increments = []
+
+        for t in range(1, m):
+            i_t = greedy_items[t]
+            prev_items = greedy_items[:t]
+            quad_sum = Q[i_t, prev_items].sum()
+            quad_increments.append(quad_sum / t)
+
+        quad_increments = np.array(quad_increments)
+        quad_alignment_corr = np.corrcoef(deltas, quad_increments)[0, 1]
+        quad_increment_skew = skew(quad_increments)
         feats = np.array(
             [
+                delta_mean,
+                delta_median,
+                delta_cv,
+                delta_skew,
                 gini_pw,
                 pw_cv,
                 pw_skew,
                 pw_iw_corr,
-                kendall_tau,
-                q_cv,
-                interaction_skew,
-                quad_linear_ratio,
-                degree_concentration,
                 cap_tight_mean,
                 fit_ratio,
+                quad_alignment_corr,
+                quad_increment_skew,
             ],
             dtype=np.float32,
         )
-
         return feats.reshape(1, -1)
 
     def _calculate_gini(self, array):
@@ -248,7 +254,7 @@ class QLearning:
     def compute_reward(self, greedy_profit, rilp_profit):
         if rilp_profit is None:
             return -2.0
-        return ((rilp_profit / greedy_profit) - 1.0) * 20.0
+        return ((rilp_profit / greedy_profit) - 1.0) * 30.0
 
     def compute_penalty(self, status):
         if status == GRB.Status.TIME_LIMIT:
@@ -296,6 +302,8 @@ class QLearning:
                 action_idx = np.random.choice(self.n_actions)
             else:
                 action_idx = greedy_action_idx
+
+            best_possible_action = self.pick_best_action(q_values)
 
             self.action_history.append(action_idx)
             stopping = self.actions[action_idx]
@@ -352,7 +360,7 @@ class QLearning:
             # TensorBoard logging
             self.writer.add_scalar("Reward", reward, ep)
             self.writer.add_scalar("ChosenAction", action_idx, ep)
-            self.writer.add_scalar("GreedyAction", greedy_action_idx, ep)
+            self.writer.add_scalar("GreedyAction", best_possible_action, ep)
             self.writer.add_scalar("RewardQDiff", diff, ep)
             self.writer.add_scalar(
                 "QValueRange", q_values.max() - q_values.min(), ep
@@ -363,6 +371,22 @@ class QLearning:
             self.epsilon = max(
                 self.epsilon_min, self.epsilon * self.epsilon_decay
             )
+            # Write results
+            file_path = "exc_1_model/results.csv"
+            file_exists = os.path.isfile(file_path)
+
+            with open(file_path, mode="a", newline="") as f:
+                writer = csv.writer(f)
+                # Write header only once
+                if not file_exists:
+                    writer.writerow(
+                        ["episode", "epsilon", "reward", "diff", "best_action"]
+                    )
+
+                # Append one row per episode
+                writer.writerow(
+                    [ep, self.epsilon, reward, diff, best_possible_action]
+                )
 
         print("\nTraining complete.")
         self.writer.close()
@@ -417,7 +441,7 @@ if __name__ == "__main__":
         for f in os.listdir(instance_folder)
         if os.path.isfile(os.path.join(instance_folder, f))
     )
-    instance_files = instance_files[:5]
+    instance_files = instance_files[:50]
 
     agent = QLearning(
         instance_files,
