@@ -64,18 +64,18 @@ class QLearning:
         self.model_yaml = f"{self.model_name}.yaml"
 
         # Actions
-        self.actions = np.arange(65, 110, 3).tolist()
+        self.actions = np.arange(45, 110, 2).tolist()
         self.n_actions = len(self.actions)
 
         # Hyperparameters
-        self.lr = 0.001
+        self.lr = 3e-4
         self.epsilon = 1.0
-        self.epsilon_decay = 0.9975
-        self.epsilon_min = 0.05
+        self.epsilon_decay = 0.999
+        self.epsilon_min = 0.1
 
-        self.replay_buffer = deque(maxlen=250)
-        self.batch_size = 32
-        self.warmup = 50
+        self.replay_buffer = deque(maxlen=4000)
+        self.batch_size = 64
+        self.warmup = 200
 
         self.q_min = -5.0
         self.q_max = 10.0
@@ -477,7 +477,7 @@ if __name__ == "__main__":
         model_name="exc_1_model/qkeras_model",
     )
 
-    agent.train(n_episodes=2000)
+    agent.train(n_episodes=6000)
 
     test_file = test_files[0]
     n, capacity, weights, quad = read_instance(test_file)
