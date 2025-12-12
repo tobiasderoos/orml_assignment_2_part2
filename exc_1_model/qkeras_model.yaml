@@ -1,5 +1,5 @@
 episode: 0
-epsilon: 0.2
-epsilon_decay: 0.997
+epsilon: 0.6065154956247766
+epsilon_decay: 0.9999
 epsilon_min: 0.2
 lr: 0.001
