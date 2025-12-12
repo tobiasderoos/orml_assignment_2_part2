@@ -3,13 +3,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from e1_testing import (
-    read_instance,
     solve_ilp,
     solve_reduced_ilp,
     greedy_qkp,
     compute_profit,
 )
 
+from e1_performance import read_instance
 import tqdm
 
 
@@ -28,26 +28,46 @@ all_gaps = []
 start_S = 45
 end_S = 95
 steps = 2
+range_list = [40, 50, 60, 70] + list(range(72, 110, 2))
 for fname in instance_files:
     gaps_this_instance = []
     print(f"\nProcessing {fname}.")
-    n, cap, weights, quad = read_instance(os.path.join(instance_folder, fname))
-    profits = [quad[i][i] for i in range(n)]
+    n, cap, w, p = read_instance(os.path.join(instance_folder, fname))
+    profits = [p[i][i] for i in range(n)]
     # Greedy with no stopping criterion
-    greedy_sel_0 = greedy_qkp(weights, profits, cap, n, stopping_criterion=None)
-    profit_greedy_0 = compute_profit(greedy_sel_0, profits, quad)
+    greedy_sel_0 = greedy_qkp(
+        weights=w,
+        profits=profits,
+        quad=p,
+        capacity=cap,
+        stopping_criterion=None,
+    )
+    profit_greedy_0 = compute_profit(greedy_sel_0, profits, p)
     print(f"Greedy profit (no stopping criterion): {profit_greedy_0}")
-
-    for S in range(start_S, end_S + 1, steps):
+    print(f"Selected items: {len(greedy_sel_0)}")
+    for S in range_list:
+        if S >= len(greedy_sel_0):
+            print(
+                f"S={S} exceeds number of items selected ({len(greedy_sel)}). Skipping."
+            )
+            break
         greedy_stop_sel = greedy_qkp(
-            weights, profits, quad, cap, stopping_criterion=S
+            weights=w,
+            profits=profits,
+            quad=p,
+            capacity=cap,
+            stopping_criterion=S,
         )
         rilp_obj, xr, _ = solve_reduced_ilp(
-            weights, profits, quad, cap, greedy_stop_sel
+            weights=w,
+            profits=profits,
+            quad_profits=p,
+            capacity=cap,
+            selected=greedy_stop_sel,
         )
 
         improvement = (rilp_obj / profit_greedy_0) - 1
-        print(f"Improvement with S={S}: {improvement * 100:.2f}%")
+        print(f"Improvement with S={S}: {improvement:.2f}%")
         gaps_this_instance.append(improvement)
 
     all_gaps.append(gaps_this_instance)
