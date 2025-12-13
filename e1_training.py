@@ -31,12 +31,12 @@ from e1_performance import read_instance
 
 
 # EMA smoothing for plots
-def smooth_ema(data, alpha=0.1):
-    smoothed = np.zeros_like(data)
-    smoothed[0] = data[0]
-    for t in range(1, len(data)):
-        smoothed[t] = alpha * data[t] + (1 - alpha) * smoothed[t - 1]
-    return smoothed
+# def smooth_ema(data, alpha=0.1):
+#     smoothed = np.zeros_like(data)
+#     smoothed[0] = data[0]
+#     for t in range(1, len(data)):
+#         smoothed[t] = alpha * data[t] + (1 - alpha) * smoothed[t - 1]
+#     return smoothed
 
 
 class QLearning:
@@ -479,9 +479,3 @@ if __name__ == "__main__":
     )
 
     agent.train(n_episodes=6000)
-
-    # test_file = test_files[0]
-    # n, capacity, weights, quad = read_instance(test_file)
-
-    # result = agent.evaluate_instance(n, capacity, weights, quad)
-    # print(result)

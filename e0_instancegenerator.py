@@ -17,12 +17,12 @@ def generate_instance(n):
 if __name__ == "__main__":
     # Parameters
     n = 200
-    seed = 400
+    seed = 9511
     np.random.seed(seed)
-    dir = "InstancesEx2_test"
+    dir = "InstancesEx1_test"
     os.makedirs(dir, exist_ok=True)
 
-    for it in range(500):
+    for it in range(100):
         # Generate instance
         c, w, p = generate_instance(n)
 

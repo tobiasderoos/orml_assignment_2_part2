@@ -1,4 +1,4 @@
-from exc_1_greedy import greedy_qkp, compute_profit
+from e1_testing import greedy_qkp, compute_profit
 
 
 # ---------------------------------------------------------------------

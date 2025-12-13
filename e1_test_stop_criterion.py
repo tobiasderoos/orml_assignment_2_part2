@@ -21,7 +21,8 @@ instance_folder = f"InstancesEx1_200/"
 instance_files = sorted(
     [f for f in os.listdir(instance_folder) if f.endswith(".txt")]
 )
-instance_files = instance_files[10:50]
+instance_files = instance_files[:50]
+
 # Store all gaps
 all_gaps = []
 
