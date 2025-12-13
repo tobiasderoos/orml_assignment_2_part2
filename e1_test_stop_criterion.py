@@ -21,14 +21,14 @@ instance_folder = f"InstancesEx1_200/"
 instance_files = sorted(
     [f for f in os.listdir(instance_folder) if f.endswith(".txt")]
 )
-instance_files = instance_files[:10]
+instance_files = instance_files[10:50]
 # Store all gaps
 all_gaps = []
 
 start_S = 45
 end_S = 95
 steps = 2
-range_list = [40, 50, 60, 70] + list(range(72, 110, 2))
+range_list = [40, 50, 60, 70, 80, 90, 100, 110, 120]
 for fname in instance_files:
     gaps_this_instance = []
     print(f"\nProcessing {fname}.")
@@ -48,7 +48,7 @@ for fname in instance_files:
     for S in range_list:
         if S >= len(greedy_sel_0):
             print(
-                f"S={S} exceeds number of items selected ({len(greedy_sel)}). Skipping."
+                f"S={S} exceeds number of items selected ({len(greedy_sel_0)}). Skipping."
             )
             break
         greedy_stop_sel = greedy_qkp(
@@ -72,38 +72,42 @@ for fname in instance_files:
 
     all_gaps.append(gaps_this_instance)
 
-# # -------------------------------------------------------------
-# # PROCESS RESULTS
-# # -------------------------------------------------------------
-# for i in range(len(all_gaps)):
-#     last_val = all_gaps[i][-1]
-#     while len(all_gaps[i]) < max_S_global + 1:
-#         all_gaps[i].append(last_val)
+# Convert all_gaps to a 2D array with NaNs for missing values
+num_instances = len(all_gaps)
+num_S = len(range_list)
 
-# gaps_matrix = np.array(all_gaps)
+gaps_matrix = np.full((num_instances, num_S), np.nan)
 
-# mean_gaps = gaps_matrix.mean(axis=0)
-# std_gaps = gaps_matrix.std(axis=0)
-# S_values = np.arange(0, max_S_global + 1)
+for i, gaps in enumerate(all_gaps):
+    gaps_matrix[i, : len(gaps)] = gaps
 
-# # ---------------------------------------------------------------------
-# # Plot results
-# # ---------------------------------------------------------------------
-# plt.figure(figsize=(9, 6))
-# plt.plot(S_values, mean_gaps, label="Mean gap", color="blue")
+# Compute differences along S (delta improvement)
+# diff[:, j] = gaps[:, j] - gaps[:, j-1]
+diff_matrix = np.diff(gaps_matrix, axis=1)
+S_diff = range_list[1:]  # x-axis for differences
 
-# plt.fill_between(
-#     S_values,
-#     mean_gaps - std_gaps,
-#     mean_gaps + std_gaps,
-#     alpha=0.2,
-#     color="blue",
-#     label="± 1 Std Dev",
-# )
+mean_diff = np.nanmean(diff_matrix, axis=0)
+std_diff = np.nanstd(diff_matrix, axis=0)
 
-# plt.xlabel("Stopping criterion items selected (S)")
-# plt.ylabel("Optimality gap (%)")
-# plt.grid()
-# plt.legend()
-# plt.savefig(f"plots/stopping_criterion_experiment.png", dpi=300)
-# plt.show()
+plt.figure(figsize=(10, 6))
+
+plt.plot(
+    S_diff, mean_diff, label="Mean difference in improvement", color="blue"
+)
+plt.fill_between(
+    S_diff,
+    mean_diff - std_diff,
+    mean_diff + std_diff,
+    color="blue",
+    alpha=0.25,
+    label="± 1 Std Dev",
+)
+
+plt.axhline(0, color="black", linestyle="--", linewidth=0.8)
+plt.xlabel("Stopping criterion S")
+plt.ylabel("Mean change in improvement (Δ)")
+plt.grid(True)
+plt.legend()
+plt.savefig("exc_1_plots/stopping_criterion_analysis.pdf", dpi=300)
+plt.savefig("exc_1_plots/stopping_criterion_analysis.png", dpi=300)
+plt.show()

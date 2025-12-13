@@ -22,11 +22,12 @@ from tensorflow.keras import layers, models, optimizers
 from collections import deque
 
 from e1_testing import (
-    read_instance,
     greedy_qkp,
     compute_profit,
     solve_reduced_ilp,
 )
+
+from e1_performance import read_instance
 
 
 # EMA smoothing for plots
@@ -479,8 +480,8 @@ if __name__ == "__main__":
 
     agent.train(n_episodes=6000)
 
-    test_file = test_files[0]
-    n, capacity, weights, quad = read_instance(test_file)
+    # test_file = test_files[0]
+    # n, capacity, weights, quad = read_instance(test_file)
 
-    result = agent.evaluate_instance(n, capacity, weights, quad)
-    print(result)
+    # result = agent.evaluate_instance(n, capacity, weights, quad)
+    # print(result)
