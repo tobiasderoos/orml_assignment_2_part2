@@ -93,7 +93,7 @@ def create_features(n, weights, profits, quad, capacity):
 
 
 if __name__ == "__main__":
-    instance_folder = "InstancesEx1_200"
+    instance_folder = "InstancesEx1_train"
     instance_files = sorted(
         os.path.join(instance_folder, f)
         for f in os.listdir(instance_folder)
@@ -138,3 +138,4 @@ if __name__ == "__main__":
     # overall summary statistics across 100 instances
     print("\nAggregate summary over 100 instances:")
     print(df.describe().T[["mean", "std", "min", "25%", "50%", "75%", "max"]])
+    df.to_csv("exc_1_model/summary_instance_features.csv")
