@@ -30,15 +30,6 @@ from e1_testing import (
 from e1_performance import read_instance
 
 
-# EMA smoothing for plots
-# def smooth_ema(data, alpha=0.1):
-#     smoothed = np.zeros_like(data)
-#     smoothed[0] = data[0]
-#     for t in range(1, len(data)):
-#         smoothed[t] = alpha * data[t] + (1 - alpha) * smoothed[t - 1]
-#     return smoothed
-
-
 class QLearning:
     """
     Neural hyper-heuristic for choosing the greedy stopping threshold in QKP.
@@ -330,6 +321,9 @@ class QLearning:
             if not candidates:
                 reward = -2.0
                 rilp_obj = greedy_profit
+                status = "No candidates"
+                time_bonus = 0.0
+                penalty = 0.0
             else:
                 start = time.time()
                 rilp_obj, _, status = self.solve_rilp_cache(
@@ -344,8 +338,9 @@ class QLearning:
                 end = time.time()
                 elapsed = end - start
                 reward = self.compute_reward(greedy_profit, rilp_obj)
-                reward += self.compute_penalty(status)
-                reward += self.compute_time_bonus(elapsed, status)
+                penalty = self.compute_penalty(status)
+                time_bonus = self.compute_time_bonus(elapsed, status)
+                reward += penalty + time_bonus
             reward = np.clip(reward, self.q_min, self.q_max)
             self.replay_buffer.append((feats.squeeze(), action_idx, reward))
 
@@ -372,29 +367,51 @@ class QLearning:
             self.all_episode_rewards.append(reward)
             self.epsilon_history.append(self.epsilon)
 
+            sorted_q = np.sort(q_values)
+
+            q_gap_1_2 = (
+                sorted_q[-1] - sorted_q[-2] if len(sorted_q) >= 2 else 0.0
+            )
+            q_gap_1_5 = (
+                sorted_q[-1] - sorted_q[-5] if len(sorted_q) >= 5 else 0.0
+            )
+            q_gap_1_10 = (
+                sorted_q[-1] - sorted_q[-10] if len(sorted_q) >= 10 else 0.0
+            )
+
             # Save Q-range metric
             self.q_value_history.append(q_values.max() - q_values.min())
 
             # TensorBoard logging
-            self.writer.add_scalar("Reward", reward, ep)
-            self.writer.add_scalar("ChosenAction", action_idx, ep)
-            self.writer.add_scalar("GreedyAction", best_possible_action, ep)
-            self.writer.add_scalar("RewardQDiff", diff, ep)
+            self.writer.add_scalar("Rewards/Reward", reward, ep)
+            self.writer.add_scalar("Rewards/Penalty", penalty, ep)
+            self.writer.add_scalar("Rewards/TimeBonus", time_bonus, ep)
+            self.writer.add_scalar("Actions/ChosenAction", action_idx, ep)
             self.writer.add_scalar(
-                "QValueRange", q_values.max() - q_values.min(), ep
+                "Actions/GreedyAction", best_possible_action, ep
             )
+            self.writer.add_scalar("Rewards/RewardQDiff", diff, ep)
+            self.writer.add_scalar(
+                "Q/QValueRange", q_values.max() - q_values.min(), ep
+            )
+            self.writer.add_scalar("Q/QGap/1_2", q_gap_1_2, ep)
+            self.writer.add_scalar("Q/QGap/1_5", q_gap_1_5, ep)
+            self.writer.add_scalar("Q/QGap/1_10", q_gap_1_10, ep)
+
             self.writer.add_scalar("Epsilon", self.epsilon, ep)
+            self.writer.add_scalar("StatusRILP", status, ep)
 
             # Update epsilon
             self.epsilon = max(
                 self.epsilon_min, self.epsilon * self.epsilon_decay
             )
             # Write results
-            file_path = "exc_1_model/results.csv"
+            file_path = "exc_1_model/train_results.csv"
             file_exists = os.path.isfile(file_path)
 
             with open(file_path, mode="a", newline="") as f:
                 writer = csv.writer(f)
+
                 if not file_exists:
                     writer.writerow(
                         [
@@ -402,18 +419,35 @@ class QLearning:
                             "instance",
                             "epsilon",
                             "reward",
+                            "penalty",
+                            "time_bonus",
                             "diff",
-                            "best_action",
+                            "chosen_action",
+                            "greedy_action",
+                            "q_gap_1_2",
+                            "q_gap_1_5",
+                            "q_gap_1_10",
+                            "q_value_range",
+                            "status_rilp",
                         ]
                     )
+
                 writer.writerow(
                     [
                         ep,
                         filepath,
                         self.epsilon,
                         reward,
+                        penalty,
+                        time_bonus,
                         diff,
+                        action_idx,
                         best_possible_action,
+                        q_gap_1_2,
+                        q_gap_1_5,
+                        q_gap_1_10,
+                        q_values.max() - q_values.min(),
+                        status,
                     ]
                 )
 
