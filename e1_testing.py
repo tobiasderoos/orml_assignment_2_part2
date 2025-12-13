@@ -245,67 +245,86 @@ if __name__ == "__main__":
     import time
     from tqdm import tqdm
 
-agent = QLearning(
-    instance_files=[],
-    reset_params=False,
-    model_name="exc_1_model/qkeras_model",
-)
-all_results = []
+    agent = QLearning(
+        instance_files=[],
+        reset_params=False,
+        model_name="exc_1_model/qkeras_model",
+    )
+    all_results = []
 
-for dataset in ["train", "test"]:
-    print(f"\n--- DATASET: {dataset.upper()} ---\n")
-    instance_folder = f"InstancesEx1_{dataset}/"
-    instance_files = [
-        f for f in os.listdir(instance_folder) if f.endswith(".txt")
-    ]
+    for dataset in ["train", "test"]:
+        print(f"\n--- DATASET: {dataset.upper()} ---\n")
+        instance_folder = f"InstancesEx1_{dataset}/"
+        instance_files = [
+            f for f in os.listdir(instance_folder) if f.endswith(".txt")
+        ]
 
-    instance_files = random.sample(instance_files, 5)
+        instance_files = random.sample(instance_files, 5)
 
-    for fname in tqdm(instance_files):
-        filepath = os.path.join(instance_folder, fname)
+        for fname in tqdm(instance_files):
+            filepath = os.path.join(instance_folder, fname)
 
-        n, cap, weights, quad = read_instance(filepath)
-        profits = [quad[i][i] for i in range(n)]
+            n, cap, weights, quad = read_instance(filepath)
+            profits = [quad[i][i] for i in range(n)]
 
-        # ---------------------------
-        # Greedy
-        # ---------------------------
-        t0 = time.time()
-        S_greedy = greedy_qkp(weights, profits, quad, cap)
-        greedy_time = time.time() - t0
-        greedy_profit = compute_profit(S_greedy, profits, quad)
+            # ---------------------------
+            # Greedy
+            # ---------------------------
+            t0 = time.time()
+            S_greedy = greedy_qkp(weights, profits, quad, cap)
+            greedy_time = time.time() - t0
+            greedy_profit = compute_profit(S_greedy, profits, quad)
 
-        # ---------------------------
-        # Full ILP
-        # ---------------------------
-        t0 = time.time()
-        ilp_profit, x_ilp, ilp_status = solve_ilp(weights, profits, quad, cap)
-        ilp_time = time.time() - t0
+            # ---------------------------
+            # Full ILP
+            # ---------------------------
+            t0 = time.time()
+            ilp_profit, x_ilp, ilp_status = solve_ilp(
+                weights, profits, quad, cap
+            )
+            ilp_time = time.time() - t0
 
-        # ---------------------------
-        # RL reduced ILP
-        # ---------------------------
-        t0 = time.time()
-        rl_result = agent.evaluate_instance(n, cap, weights, quad)
-        rl_time = time.time() - t0
+            # ---------------------------
+            # RL reduced ILP
+            # ---------------------------
+            t0 = time.time()
+            rl_result = agent.evaluate_instance(n, cap, weights, quad)
+            rl_time = time.time() - t0
 
-        rl_profit = rl_result["rilp_profit"]
-        rl_stopping = rl_result["chosen_threshold"]
+            rl_profit = rl_result["rilp_profit"]
+            rl_stopping = rl_result["chosen_threshold"]
 
-        # ---------------------------
-        # Storing results per type of model
-        # ---------------------------
-        all_results.append(
-            {
-                "dataset": dataset,
-                "instance": fname,
-                "greedy_profit": greedy_profit,
-                "greedy_time": greedy_time,
-                "ilp_profit": ilp_profit,
-                "ilp_time": ilp_time,
-                "ilp_status": ilp_status,
-                "rl_profit": rl_profit,
-                "rl_time": rl_time,
-                "rl_stopping": rl_stopping,
-            }
-        )
+            # Calculate relative improvements
+            rel_improvement_greedy = (
+                (rl_profit - greedy_profit) / greedy_profit * 100
+            )
+            rel_improvement_full = (rl_profit - ilp_profit) / ilp_profit * 100
+            combined_score = (
+                (rl_profit - greedy_profit) / (ilp_profit - greedy_profit) * 100
+            )
+
+            # ---------------------------
+            # Storing results per type of model
+            # ---------------------------
+            all_results.append(
+                {
+                    "dataset": dataset,
+                    "instance": fname,
+                    "greedy_profit": greedy_profit,
+                    "rl_profit": rl_profit,
+                    "ilp_profit": ilp_profit,
+                    "rel_improvement_greedy": round(rel_improvement_greedy, 2),
+                    "rel_improvement_full": round(rel_improvement_full, 2)
+                    if ilp_profit is not None
+                    else 100.0,
+                    "combined_score": round(combined_score, 2),
+                    "greedy_time": greedy_time,
+                    "ilp_time": ilp_time,
+                    "rl_time": rl_time,
+                    "rl_stopping": rl_stopping,
+                }
+            )
+    df_results = pd.DataFrame(all_results)
+    print("\n--- SUMMARY RESULTS ---\n")
+    print(df_results)
+    df_results.to_csv("exc_1_results/train_test_results.csv", index=False)
