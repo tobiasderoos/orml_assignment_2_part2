@@ -293,7 +293,10 @@ class QLearning:
             greedy_action_idx = self.pick_random_best_action(q_values)
 
             # ε-greedy selection
-            if np.random.rand() < self.epsilon:
+            if (
+                self.epsilon > self.epsilon_min
+                and np.random.rand() < self.epsilon
+            ):
                 action_idx = np.random.choice(self.n_actions)
             else:
                 action_idx = greedy_action_idx
@@ -512,4 +515,4 @@ if __name__ == "__main__":
         model_name="exc_1_model/qkeras_model",
     )
 
-    agent.train(n_episodes=6000)
+    agent.train(n_episodes=3000)
