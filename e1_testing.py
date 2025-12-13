@@ -317,7 +317,7 @@ if __name__ == "__main__":
                     "rel_improvement_full": round(rel_improvement_full, 2)
                     if ilp_profit is not None
                     else 100.0,
-                    "combined_score": round(combi, 2),
+                    "combined_score": round(combined_score, 2),
                     "greedy_time": greedy_time,
                     "ilp_time": ilp_time,
                     "rl_time": rl_time,
