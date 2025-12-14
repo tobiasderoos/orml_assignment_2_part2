@@ -259,7 +259,7 @@ if __name__ == "__main__":
             f for f in os.listdir(instance_folder) if f.endswith(".txt")
         ]
 
-        instance_files = random.sample(instance_files, 5)
+        instance_files = random.sample(instance_files, 50)
 
         for fname in tqdm(instance_files):
             filepath = os.path.join(instance_folder, fname)
