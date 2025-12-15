@@ -37,6 +37,13 @@ class DeepQEnv(gym.Env):
         self.weights = np.array(weights, dtype=np.float32)
         self.profits = np.array(profits, dtype=np.float32)
         self.quad = np.array(quad, dtype=np.float32)
+
+        ratio = self.profits / self.weights
+        self.order = np.argsort(ratio)[::-1]  # descending
+        self.weights = self.weights[self.order]
+        self.profits = self.profits[self.order]
+        self.quad = self.quad[np.ix_(self.order, self.order)]
+
         self.capacity = float(capacity)
         self.n = len(weights)
         self.instance_id = instance_id
@@ -244,6 +251,7 @@ class DeepQAgent:
         memory_size=50000,
         warmup_steps=0,
         build_model=True,
+        model_name=None,
     ):
         self.state_size = state_size
         self.action_size = 2  # skip / take
@@ -475,6 +483,9 @@ class DeepQAgent:
 
         return agent
 
+    def save_model(self, model_path):
+        self.online_model.save(model_path)
+
 
 def train_dqn(envs, agent_config, num_episodes=500, print_interval=50):
     assert len(envs) >= 2, "At least two environment are required."
@@ -562,6 +573,11 @@ def train_dqn(envs, agent_config, num_episodes=500, print_interval=50):
                 agent.remaining_caps[-1],
                 step=agent.episode_count,
             )
+
+        # save model every 50 episodes
+        if (ep + 1) % 500 == 0:
+            trained_agent.save_model(agent_config["model_name"])
+            print("Temporary model saved.")
         with open(agent.file_path_episode, mode="a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(
@@ -576,26 +592,30 @@ def train_dqn(envs, agent_config, num_episodes=500, print_interval=50):
                     info.get("remaining_capacity", 0.0),
                 ]
             )
-
+    agent.save_model(agent_config["model_name"])
     return agent
 
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
+    model_dir = "exc_2_model"
+    os.makedirs(model_dir, exist_ok=True)
+
     save = True
-    num_episodes = 250
+    num_episodes = 5000
     print_interval = 5
     agent_config = {
         "batch_size": 64,
-        "gamma": 0.975,
+        "gamma": 0.95,
         "tau": 0.005,
         "epsilon": 1.0,
         "epsilon_min": 0.05,
-        "epsilon_decay": 0.98,
-        "lr": 3e-2,
+        "epsilon_decay": 0.999,
+        "lr": 3e-4,
         "memory_size": 100000,
-        "warmup_steps": 10,
+        "warmup_steps": 1000,
+        "model_name": os.path.join(model_dir, "dqn_qkp_model.keras"),
     }
 
     # Load training instances
@@ -613,12 +633,3 @@ if __name__ == "__main__":
 
     # Train DQN agent
     trained_agent = train_dqn(envs, agent_config, num_episodes, print_interval)
-
-    if save:
-        # Save the trained model
-        model_dir = "exc_2_model"
-        os.makedirs(model_dir, exist_ok=True)
-        model_path = os.path.join(model_dir, f"exc_2_model.keras")
-        trained_agent.online_model.save(model_path)
-
-        print(f"Trained model saved to {model_path}")
