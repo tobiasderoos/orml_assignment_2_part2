@@ -3,7 +3,7 @@ import os
 import random
 from collections import deque
 
-
+import csv
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
@@ -11,8 +11,8 @@ import tensorflow as tf
 from tensorflow.keras import layers, models, optimizers
 import tqdm
 
-from e1_performance import read_instance
-from e1_testing import compute_profit
+from e2_performanceEx2 import read_instance
+from e2_testing import compute_profit
 
 from tensorflow.summary import create_file_writer
 
@@ -44,11 +44,11 @@ class DeepQEnv(gym.Env):
         self.max_w = float(np.max(self.weights))
         self.max_p = float(np.max(self.profits))
         self.max_q = float(np.max(np.triu(self.quad, k=1)))
-
+        self.max_linear = float(np.sum(self.profits))
         self.max_gain = float(np.max(self.profits + np.sum(self.quad, axis=1)))
 
         # Observation space size and action space
-        self.obs_dim = 16
+        self.obs_dim = 12
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(self.obs_dim,), dtype=np.float32
         )
@@ -67,19 +67,28 @@ class DeepQEnv(gym.Env):
         self.current_weight = 0.0
         self.current_profit = 0.0
         self.current_idx = 0
+        self.current_step = 0
 
         obs = self._get_obs()
         return obs, {}
 
     def step(self, action):
-        info = {"instance_id": self.instance_id}
+        i = self.current_step
+        info = {
+            "instance_id": self.instance_id,
+            "step_idx": self.current_step,
+            "action": action,
+        }
+
+        fits = self.weights[i] <= self.remaining_capacity
+        penalty = action == 1 and not fits
+        bonus = action == 0 and not fits
+
+        # episode,step,instance_id,action,reward,done,epsilon,q_skip,q_take,td_error,remaining_capacity
         terminated = False
         truncated = False
 
-        i = self.current_idx
-
         reward = 0.0
-        penalties, bonuses = 0, 0
         prev_profit = self.current_profit
 
         if action == 1:  # TAKE
@@ -90,25 +99,31 @@ class DeepQEnv(gym.Env):
                 self.current_profit = float(
                     compute_profit(self.selected, self.profits, self.quad)
                 )
+
                 reward = self.current_profit - prev_profit
                 reward /= self.max_gain
             else:
                 reward -= 0.1
-                penalties += 1
-
         elif action == 0:
             if self.weights[i] <= self.remaining_capacity:
                 pass
             else:
                 reward += 0.1  # small bonus for skipping an item that doesn't fit (similar to penalty for trying to take it)
-                bonuses += 1
-        self.current_idx += 1
+        self.current_step += 1
 
-        if self.current_idx == self.n - 1 or self.remaining_capacity <= 0:
+        if self.current_step == self.n or self.remaining_capacity <= 0:
             terminated = True
-            info["penalties"] = penalties
-            info["bonuses"] = bonuses
-            info["remaining_capacity"] = self.remaining_capacity
+        info = {
+            "instance_id": self.instance_id,
+            "step_idx": i,  # decision index
+            "action": action,
+            "reward": reward,
+            "penalty": penalty,
+            "bonus": bonus,
+            "remaining_capacity": self.remaining_capacity,
+        }
+
+        if terminated:
             info["final_profit"] = self.current_profit
 
         return self._get_obs(), float(reward), terminated, truncated, info
@@ -145,81 +160,70 @@ class DeepQEnv(gym.Env):
         return ub
 
     def _get_obs(self):
-        i = self.current_idx
-        # Item-specific
+        i = self.current_idx - 1
+
+        # Standard
         w_i = self.weights[i] / self.max_w
         p_i = self.profits[i] / self.max_p
         fits = float(self.weights[i] <= self.remaining_capacity)
-        pw_ratio = self.profits[i] / self.weights[i]
-        pw_ratio_max = np.max(pw_ratio)
-        pw_ratio = pw_ratio / pw_ratio_max
-
-        # Quadratic contribution with already selected items
-        if np.any(self.selected):
-            quad_contrib = self.quad[i, self.selected == 1].sum() / (
-                self.max_q * np.sum(self.selected)
-            )
-            best_synergy = np.max(self.quad[i, self.selected == 1])
-        else:
-            quad_contrib = 0.0
-            best_synergy = 0.0
-
-        selected_items = np.where(self.selected == 1)[0]
         remaining_cap = self.remaining_capacity / self.capacity
-        progress = self.current_idx / self.n
-        selected_frac = np.sum(self.selected) / self.n
 
+        # Remaining items
         remaining_weights = self.weights[i + 1 :]
         remaining_profits = self.profits[i + 1 :]
 
-        mean_remaining_weight = (
-            np.mean(remaining_weights) / self.max_w if remaining_weights.size > 0 else 0.0
-        )
+        # Linear quality
+        pw_i = self.profits[i] / self.weights[i]
+        remaining_pw = remaining_profits / remaining_weights
+        pw_max = np.max(remaining_pw) if remaining_pw.size > 0 else pw_i
+        pw_ratio_rel = pw_i / pw_max
 
-        max_remaining_profit = (
-            np.max(remaining_profits) / self.max_p if remaining_profits.size > 0 else 0.0
-        )
+        fk_ub = self._fractional_knapsack_upper_bound(i + 1)
+        fk_ub_norm = fk_ub / self.max_linear
 
+        # Quadratic interactions NOW
+        quad_now = np.sum(self.quad[i, self.selected == 1])
+        quad_now_norm = quad_now / (self.max_q * self.n)
+
+        # Quadratic future of i : max quad of future item with i
+        if i + 1 < self.n:
+            quad_future_i_max = np.max(self.quad[i, i + 1 :]) / self.max_q
+        else:
+            quad_future_i_max = 0.0
+
+        # Quadratic future of current set
+        if np.any(self.selected) and i + 1 < self.n:
+            quad_rem = self.quad[i + 1 :, self.selected == 1]
+            max_quad_remaining = np.max(quad_rem) / self.max_q
+        else:
+            max_quad_remaining = 0.0
+
+        # where are we? fraction selected and what else does fit?
+        progress = i / self.n
+        selected_frac = np.sum(self.selected) / self.n
         fraction_that_fit = (
-            np.sum(remaining_weights <= self.remaining_capacity) / self.n
+            np.sum(remaining_weights <= self.remaining_capacity) / remaining_weights.size
             if remaining_weights.size > 0
             else 0.0
         )
 
-        if selected_items.size > 0 and i + 1 < self.n:
-            quad_remaining = self.quad[
-                i + 1 :, selected_items
-            ]  # shape: (remaining_items, selected)
-
-            max_quad_remaining = np.max(quad_remaining) / self.max_q
-            mean_quad_remaining = np.mean(quad_remaining) / self.max_q
-        else:
-            max_quad_remaining = 0.0
-            mean_quad_remaining = 0.0
-
-        fk_ub = self._fractional_knapsack_upper_bound(i + 1)
-        fk_ub_norm = fk_ub / (self.max_q * self.n)
-
-        obs = [
-            w_i,
-            p_i,
-            fits,
-            pw_ratio,
-            pw_ratio_max,
-            quad_contrib,
-            best_synergy,
-            remaining_cap,
-            progress,
-            selected_frac,
-            mean_remaining_weight,
-            max_remaining_profit,
-            fraction_that_fit,
-            max_quad_remaining,
-            mean_quad_remaining,
-            fk_ub_norm,
-        ]
-
-        return np.array(obs, dtype=np.float32)
+        return np.array(
+            [
+                w_i,
+                p_i,
+                fits,
+                remaining_cap,
+                pw_ratio_rel,
+                fk_ub_norm,
+                quad_now_norm,
+                quad_future_i_max,
+                max_quad_remaining,
+                progress,
+                selected_frac,
+                fraction_that_fit,
+            ],
+            dtype=np.float32,
+        )
 
 
 class DeepQAgent:
@@ -274,9 +278,50 @@ class DeepQAgent:
         self.epsilons = []
         self.penalties = []
         self.bonuses = []
+        self.remaining_caps = []
+
         log_dir = "logs/dqn_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         os.makedirs(log_dir, exist_ok=True)
         self.writer = tf.summary.create_file_writer(log_dir)
+
+        self.file_path_episode = "exc_2_results/train_episode_results.csv"
+        self.file_path_steps = "exc_2_results/train_step_results.csv"
+        os.makedirs("exc_2_results", exist_ok=True)
+        file_exists = os.path.isfile(self.file_path_episode)
+
+        with open(self.file_path_episode, mode="a", newline="") as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(
+                    [
+                        "episode",
+                        "instance_id",
+                        "epsilon",
+                        "total_reward",
+                        "final_profit",
+                        "n_penalties",
+                        "n_bonuses",
+                        "remaining_capacity",
+                    ]
+                )
+
+        steps_exists = os.path.isfile(self.file_path_steps)
+
+        with open(self.file_path_steps, mode="a", newline="") as f:
+            writer = csv.writer(f)
+            if not steps_exists:
+                writer.writerow(
+                    [
+                        "episode",
+                        "step",
+                        "instance_id",
+                        "action",
+                        "reward",
+                        "penalties",
+                        "bonuses",
+                        "remaining_capacity",
+                    ]
+                )
 
     # ------------------------
     # Model
@@ -447,10 +492,27 @@ def train_dqn(envs, agent_config, num_episodes=500, print_interval=50):
             total_reward += reward
             state = next_state
 
+            if ep % 10 == 0:
+                with open(agent.file_path_steps, mode="a", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(
+                        [
+                            agent.episode_count,  # episode id
+                            info["step_idx"],  # step id
+                            info["instance_id"],
+                            action,
+                            reward,
+                            info.get("penalty", 0),
+                            info.get("bonus", 0),
+                            info["remaining_capacity"],
+                        ]
+                    )
+
             if terminated:
                 agent.profits.append(info["final_profit"])
                 agent.penalties.append(info.get("penalties", 0))
                 agent.bonuses.append(info.get("bonuses", 0))
+                agent.remaining_caps.append(info.get("remaining_capacity", 0.0))
                 break
 
         agent.decay_epsilon(n_episodes=num_episodes)
@@ -485,6 +547,25 @@ def train_dqn(envs, agent_config, num_episodes=500, print_interval=50):
                 "episode/bonuses",
                 agent.bonuses[-1],
                 step=agent.episode_count,
+            )
+            tf.summary.scalar(
+                "episode/remaining_capacity",
+                agent.remaining_caps[-1],
+                step=agent.episode_count,
+            )
+        with open(agent.file_path_episode, mode="a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    agent.episode_count + 1,
+                    info.get("instance_id", None),
+                    agent.epsilon,
+                    total_reward,
+                    info.get("final_profit", 0.0),
+                    info.get("penalties", 0),
+                    info.get("bonuses", 0),
+                    info.get("remaining_capacity", 0.0),
+                ]
             )
 
     return agent

@@ -1,6 +1,12 @@
-from e2_performanceEx2 import read_instance
+import numpy as np
 
-from e2_training_q import DeepQAgent
+
+def compute_profit(S, profits, quad_profits):
+    # NOTE S SHOULD BE INDICES NOT BOOL MASK
+    S = np.where(S == 1)[0]
+    total = sum(profits[i] for i in S)
+    total += sum(quad_profits[i][j] for i in S for j in S if i < j)
+    return total
 
 
 def greedy_qkp(
@@ -38,6 +44,7 @@ def greedy_qkp(
 if __name__ == "__main__":
     import os
     from e2_training_q import DeepQEnv
+    from e2_performanceEx2 import read_instance
 
     # Load training instances
     folder = "InstancesEx2_test"
