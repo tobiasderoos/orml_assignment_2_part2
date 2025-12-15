@@ -79,6 +79,7 @@ class DeepQEnv(gym.Env):
         i = self.current_idx
 
         reward = 0.0
+        penalties, bonuses = 0, 0
         prev_profit = self.current_profit
 
         if action == 1:  # TAKE
@@ -93,24 +94,21 @@ class DeepQEnv(gym.Env):
                 reward /= self.max_gain
             else:
                 reward -= 0.1
+                penalties += 1
+
         elif action == 0:
             if self.weights[i] <= self.remaining_capacity:
-                # hypothetical_selected = self.selected.copy()
-                # hypothetical_selected[i] = 1
-                # hypothetical_profit = float(
-                #     compute_profit(hypothetical_selected, self.profits, self.quad)
-                # )
-                # hypothetical_reward = hypothetical_profit - prev_profit
-                # hypothetical_reward /= self.max_gain
-                # reward = -hypothetical_reward
                 pass
             else:
                 reward += 0.1  # small bonus for skipping an item that doesn't fit (similar to penalty for trying to take it)
-
+                bonuses += 1
         self.current_idx += 1
 
         if self.current_idx == self.n - 1 or self.remaining_capacity <= 0:
             terminated = True
+            info["penalties"] = penalties
+            info["bonuses"] = bonuses
+            info["remaining_capacity"] = self.remaining_capacity
             info["final_profit"] = self.current_profit
 
         return self._get_obs(), float(reward), terminated, truncated, info
@@ -274,7 +272,8 @@ class DeepQAgent:
         self.episode_rewards = []
         self.profits = []
         self.epsilons = []
-
+        self.penalties = []
+        self.bonuses = []
         log_dir = "logs/dqn_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         os.makedirs(log_dir, exist_ok=True)
         self.writer = tf.summary.create_file_writer(log_dir)
@@ -391,9 +390,11 @@ class DeepQAgent:
 
         self.target_model.set_weights(new_weights)
 
-    def decay_epsilon(self):
-        if self.epsilon > self.epsilon_min:
-            self.epsilon *= self.epsilon_decay
+    def decay_epsilon(self, n_episodes):
+        self.epsilon = max(
+            self.epsilon_min,
+            1.0 - self.episode_count * (1.0 - self.epsilon_min) / n_episodes,
+        )
 
     def evaluate(self, env):
         state, _ = env.reset()
@@ -448,9 +449,11 @@ def train_dqn(envs, agent_config, num_episodes=500, print_interval=50):
 
             if terminated:
                 agent.profits.append(info["final_profit"])
+                agent.penalties.append(info.get("penalties", 0))
+                agent.bonuses.append(info.get("bonuses", 0))
                 break
 
-        agent.decay_epsilon()
+        agent.decay_epsilon(n_episodes=num_episodes)
         agent.episode_count += 1
         agent.epsilons.append(agent.epsilon)
         agent.episode_rewards.append(episode_rewards)
@@ -473,6 +476,16 @@ def train_dqn(envs, agent_config, num_episodes=500, print_interval=50):
                 agent.epsilons[-1],
                 step=agent.episode_count,
             )
+            tf.summary.scalar(
+                "episode/penalties",
+                agent.penalties[-1],
+                step=agent.episode_count,
+            )
+            tf.summary.scalar(
+                "episode/bonuses",
+                agent.bonuses[-1],
+                step=agent.episode_count,
+            )
 
     return agent
 
@@ -485,11 +498,11 @@ if __name__ == "__main__":
     print_interval = 100
     agent_config = {
         "batch_size": 64,
-        "gamma": 0.95,
+        "gamma": 0.975,
         "tau": 0.005,
         "epsilon": 1.0,
         "epsilon_min": 0.05,
-        "epsilon_decay": 0.999,
+        "epsilon_decay": 0.995,
         "lr": 3e-4,
         "memory_size": 100000,
         "warmup_steps": 1000,
@@ -503,10 +516,10 @@ if __name__ == "__main__":
         if fname.endswith(".txt")
     ]
     envs = []
-    for f in instance_files:
+    for i, f in enumerate(instance_files):
         n, cap, w, q = read_instance(f)
         p = [q[i][i] for i in range(n)]
-        envs.append(DeepQEnv(w, p, q, cap, instance_id=0))
+        envs.append(DeepQEnv(w, p, q, cap, instance_id=i))
 
     # Train DQN agent
     trained_agent = train_dqn(envs, agent_config, num_episodes, print_interval)
