@@ -613,20 +613,8 @@ if __name__ == "__main__":
     os.makedirs(model_dir, exist_ok=True)
 
     save = True
-    num_episodes = 20
-    print_interval = 5
-    # agent_config = {
-    #     "batch_size": 5,
-    #     "gamma": 0.95,
-    #     "tau": 0.01,
-    #     "epsilon": 1.0,
-    #     "epsilon_min": 0.05,
-    #     "epsilon_decay": 0.999,
-    #     "lr": 3e-4,
-    #     "memory_size": 100_000,
-    #     "warmup_steps": 1,
-    #     "model_name": os.path.join(model_dir, "dqn_qkp_model.keras"),
-    # }
+    num_episodes = 8000
+    print_interval = 250
 
     agent_config = {
         "batch_size": 96,
