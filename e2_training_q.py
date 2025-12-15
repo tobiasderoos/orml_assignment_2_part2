@@ -65,7 +65,6 @@ class DeepQEnv(gym.Env):
         self.selected = None
         self.remaining_capacity = None
         self.current_profit = 0.0
-        self.current_idx = 0
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
@@ -74,8 +73,10 @@ class DeepQEnv(gym.Env):
         self.remaining_capacity = self.capacity
         self.current_weight = 0.0
         self.current_profit = 0.0
-        self.current_idx = 0
         self.current_step = 0
+        self.n_penalty = 0
+        self.n_bonuses = 0
+        self.n_opportunities = 0
 
         obs = self._get_obs()
         return obs, {}
@@ -89,18 +90,13 @@ class DeepQEnv(gym.Env):
         }
 
         fits = self.weights[i] <= self.remaining_capacity
-        penalty = action == 1 and not fits
-        bonus = action == 0 and not fits
-
-        # episode,step,instance_id,action,reward,done,epsilon,q_skip,q_take,td_error,remaining_capacity
         terminated = False
         truncated = False
-
         reward = 0.0
         prev_profit = self.current_profit
 
         if action == 1:  # TAKE
-            if self.weights[i] <= self.remaining_capacity:
+            if fits:
                 self.selected[i] = 1
                 self.remaining_capacity -= self.weights[i]
 
@@ -108,32 +104,36 @@ class DeepQEnv(gym.Env):
                     compute_profit(self.selected, self.profits, self.quad)
                 )
 
-                reward = self.current_profit - prev_profit
-                reward /= self.max_gain
+                reward = (self.current_profit - prev_profit) / self.max_gain
             else:
                 reward -= 0.1
-        elif action == 0:
-            if self.weights[i] <= self.remaining_capacity:
-                pass
-            else:
-                reward += 0.1  # small bonus for skipping an item that doesn't fit (similar to penalty for trying to take it)
+                self.n_penalty += 1
+
+        else:  # action == 0 (SKIP)
+            if fits:
+                reward -= 0.5 * self.profits[i] / self.max_gain
+                self.n_opportunities += 1
+            if not fits:
+                reward += 0.1
+                self.n_bonuses += 1
         self.current_step += 1
 
-        if self.current_step == self.n or self.remaining_capacity <= 0:
-            terminated = True
+        terminated = self.current_step >= self.n
+        truncated = self.remaining_capacity <= 0 and not terminated
+
         info = {
             "instance_id": self.instance_id,
             "step_idx": i,  # decision index
             "action": action,
             "reward": reward,
+            "lost opportunities": self.n_opportunities,
+            "penalties": self.n_penalty,
+            "bonuses": self.n_bonuses,
+            "remaining_capacity": self.remaining_capacity,
         }
-        info["penalty"] = info.get("penalty", 0) + math.ceil(penalty) if penalty else 0
-        info["bonus"] = info.get("bonus", 0) + math.ceil(bonus) if bonus else 0
-        info["remaining_capacity"] = (self.remaining_capacity,)
 
-        if terminated:
+        if terminated or truncated:
             info["final_profit"] = self.current_profit
-            info["remaining_capacity"] = self.remaining_capacity
 
         return self._get_obs(), float(reward), terminated, truncated, info
 
@@ -169,8 +169,9 @@ class DeepQEnv(gym.Env):
         return ub
 
     def _get_obs(self):
-        i = self.current_idx - 1
-
+        i = self.current_step
+        if i >= self.n:
+            return np.zeros(self.obs_dim, dtype=np.float32)
         # Standard
         w_i = self.weights[i] / self.max_w
         p_i = self.profits[i] / self.max_p
@@ -327,6 +328,7 @@ class DeepQAgent:
                         "instance_id",
                         "action",
                         "reward",
+                        "lost_opportunities",
                         "penalties",
                         "bonuses",
                         "remaining_capacity",
@@ -522,6 +524,7 @@ def train_dqn(envs, agent_config, num_episodes=500, print_interval=50):
                             info["instance_id"],
                             action,
                             reward,
+                            info.get("lost opportunities", 0),
                             info.get("penalty", 0),
                             info.get("bonus", 0),
                             info["remaining_capacity"],

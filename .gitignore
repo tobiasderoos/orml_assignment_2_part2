@@ -32,6 +32,7 @@ processed/
 *.xlsx
 *.xls
 *.parquet
+*.txt
 
 # Folders
 Lab9_codes/*
