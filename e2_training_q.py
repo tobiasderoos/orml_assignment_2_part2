@@ -566,42 +566,23 @@ def train_dqn(envs, agent_config, num_episodes=500, print_interval=50):
                 f"Epsilon: {agent.epsilons[-1]:.4f}"
             )
 
-        # with agent.writer.as_default():
-        #     tf.summary.scalar(
-        #         "episode/profit",
-        #         agent.profits[-1],
-        #         step=agent.episode_count,
-        #     )
-        #     tf.summary.scalar(
-        #         "episode/epsilon",
-        #         agent.epsilons[-1],
-        #         step=agent.episode_count,
-        #     )
-        #     tf.summary.scalar(
-        #         "episode/network_diff", agent.network_diffs[-1], step=agent.episode_count
-        #     )
-        #     tf.summary()
-        #     tf.summary.scalar(
-        #         "episode/penalties",
-        #         agent.penalties[-1],
-        #         step=agent.episode_count,
-        #     )
-        #     tf.summary.scalar(
-        #         "episode/bonuses",
-        #         agent.bonuses[-1],
-        #         step=agent.episode_count,
-        #     )
-        #     tf.summary.scalar(
-        #         "episode/remaining_capacity",
-        #         agent.remaining_caps[-1],
-        #         step=agent.episode_count,
-        #     )
-
         # save model every 50 episodes
         if (ep + 1) % 500 == 0:
             name_file = f"exc_2_model/dqn_qkp_model_ep{ep + 1}.keras"
             agent.save_model(name_file)
             print(f"Saved model to {name_file}")
+
+        last_td = (
+            agent.tds[-1]
+            if len(agent.tds) > 0
+            else {"mean_diff": 0.0, "max_diff": 0.0, "min_diff": 0.0}
+        )
+
+        last_net_diff = agent.network_diffs[-1] if len(agent.network_diffs) > 0 else 0.0
+
+        last_network_diff = (
+            agent.network_diffs[-1] if len(agent.network_diffs) > 0 else 0.0
+        )
         with open(agent.file_path_episode, mode="a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(
@@ -610,10 +591,10 @@ def train_dqn(envs, agent_config, num_episodes=500, print_interval=50):
                     info.get("instance_id", None),
                     agent.epsilon,
                     total_reward,
-                    agent.tds[-1]["mean_diff"],
-                    agent.tds[-1]["max_diff"],
-                    agent.tds[-1]["min_diff"],
-                    agent.network_diffs[-1],
+                    last_td["mean_diff"],
+                    last_td["max_diff"],
+                    last_td["min_diff"],
+                    last_network_diff,
                     info.get("lost_opportunities", [0]),
                     info.get("final_profit", [0.0]),
                     info.get("penalties", [0]),
@@ -634,21 +615,8 @@ if __name__ == "__main__":
     save = True
     num_episodes = 20
     print_interval = 5
-    agent_config = {
-        "batch_size": 5,
-        "gamma": 0.95,
-        "tau": 0.01,
-        "epsilon": 1.0,
-        "epsilon_min": 0.05,
-        "epsilon_decay": 0.999,
-        "lr": 3e-4,
-        "memory_size": 100_000,
-        "warmup_steps": 1,
-        "model_name": os.path.join(model_dir, "dqn_qkp_model.keras"),
-    }
-
-    #     agent_config = {
-    #     "batch_size": 96,
+    # agent_config = {
+    #     "batch_size": 5,
     #     "gamma": 0.95,
     #     "tau": 0.01,
     #     "epsilon": 1.0,
@@ -656,9 +624,22 @@ if __name__ == "__main__":
     #     "epsilon_decay": 0.999,
     #     "lr": 3e-4,
     #     "memory_size": 100_000,
-    #     "warmup_steps": 5000,
+    #     "warmup_steps": 1,
     #     "model_name": os.path.join(model_dir, "dqn_qkp_model.keras"),
     # }
+
+    agent_config = {
+        "batch_size": 96,
+        "gamma": 0.95,
+        "tau": 0.01,
+        "epsilon": 1.0,
+        "epsilon_min": 0.05,
+        "epsilon_decay": 0.999,
+        "lr": 3e-4,
+        "memory_size": 100_000,
+        "warmup_steps": 5000,
+        "model_name": os.path.join(model_dir, "dqn_qkp_model.keras"),
+    }
 
     # Load training instances
     folder = "InstancesEx2_train"
