@@ -580,7 +580,7 @@ def train_dqn(envs, agent_config, num_episodes=500, print_interval=50):
 
         # save model every 50 episodes
         if (ep + 1) % 500 == 0:
-            trained_agent.save_model(agent_config["model_name"])
+            agent.save_model(agent_config["model_name"])
             print("Temporary model saved.")
         with open(agent.file_path_episode, mode="a", newline="") as f:
             writer = csv.writer(f)
@@ -596,7 +596,7 @@ def train_dqn(envs, agent_config, num_episodes=500, print_interval=50):
                     info.get("remaining_capacity", 0.0),
                 ]
             )
-    agent.save_model(agent_config["model_name"])
+    agent.save_model(f["model_name"])
     return agent
 
 

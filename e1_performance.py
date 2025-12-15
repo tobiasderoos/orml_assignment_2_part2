@@ -28,7 +28,7 @@ def run_hyperheuristic(instance_file, agent):
 # Evaluate the subset of 20 instances and print the results in a file
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
-    from qlearning.qlearning_agent import QLearning
+    from e1_training import QLearning
 
     NUM_INSTANCES = 20
     RESULTS_FILE = "results1.txt"
