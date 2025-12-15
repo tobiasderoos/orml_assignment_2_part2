@@ -17,10 +17,8 @@ import tqdm
 # RUN STOPPING CRITERION EXPERIMENT ON INSTANCES
 # ---------------------------------------------------------------------
 
-instance_folder = f"InstancesEx1_200/"
-instance_files = sorted(
-    [f for f in os.listdir(instance_folder) if f.endswith(".txt")]
-)
+instance_folder = f"InstancesEx1_train/"
+instance_files = sorted([f for f in os.listdir(instance_folder) if f.endswith(".txt")])
 instance_files = instance_files[:50]
 
 # Store all gaps
@@ -83,7 +81,6 @@ for i, gaps in enumerate(all_gaps):
     gaps_matrix[i, : len(gaps)] = gaps
 
 # Compute differences along S (delta improvement)
-# diff[:, j] = gaps[:, j] - gaps[:, j-1]
 diff_matrix = np.diff(gaps_matrix, axis=1)
 S_diff = range_list[1:]  # x-axis for differences
 
@@ -92,16 +89,14 @@ std_diff = np.nanstd(diff_matrix, axis=0)
 
 plt.figure(figsize=(10, 6))
 
-plt.plot(
-    S_diff, mean_diff, label="Mean difference in improvement", color="blue"
-)
+plt.plot(S_diff, mean_diff, label="Mean difference in improvement", color="blue")
 plt.fill_between(
     S_diff,
     mean_diff - std_diff,
     mean_diff + std_diff,
     color="blue",
     alpha=0.25,
-    label="± 1 Std Dev",
+    label="± 1 std dev",
 )
 
 plt.axhline(0, color="black", linestyle="--", linewidth=0.8)
@@ -109,6 +104,6 @@ plt.xlabel("Stopping criterion S")
 plt.ylabel("Mean change in improvement (Δ)")
 plt.grid(True)
 plt.legend()
-plt.savefig("exc_1_plots/stopping_criterion_analysis.pdf", dpi=300)
-plt.savefig("exc_1_plots/stopping_criterion_analysis.png", dpi=300)
+# plt.savefig("exc_1_plots/stopping_criterion_analysis.pdf", dpi=300)
+# plt.savefig("exc_1_plots/stopping_criterion_analysis.png", dpi=300)
 plt.show()

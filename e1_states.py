@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import skew
 
-from e1_training import read_instance  # your loader
+from e1_performance import read_instance
 
 
 def calculate_gini(x: np.ndarray) -> float:
@@ -11,9 +11,9 @@ def calculate_gini(x: np.ndarray) -> float:
     array = x.flatten()
     n = array.shape[0]
     cumulative_values = np.cumsum(array)
-    gini = (2 * np.sum((np.arange(1, n + 1)) * array)) / (
-        n * cumulative_values[-1]
-    ) - (n + 1) / n
+    gini = (2 * np.sum((np.arange(1, n + 1)) * array)) / (n * cumulative_values[-1]) - (
+        n + 1
+    ) / n
     return gini
 
 
@@ -42,9 +42,7 @@ def create_features(n, weights, profits, quad, capacity):
     # Greedy packing
     sorted_indices = np.argsort(pw)[::-1]
     cumulative_weight = np.cumsum(w[sorted_indices])
-    items_that_fit = int(
-        np.searchsorted(cumulative_weight, capacity, side="right")
-    )
+    items_that_fit = int(np.searchsorted(cumulative_weight, capacity, side="right"))
     fit_ratio = items_that_fit / n
     cap_tight_mean = capacity / w.mean()
 
@@ -123,12 +121,7 @@ if __name__ == "__main__":
         feats = create_features(n, w, p, q, c).ravel()
 
         row = {"instance": fname}
-        row.update(
-            {
-                feature_names[i]: float(feats[i])
-                for i in range(len(feature_names))
-            }
-        )
+        row.update({feature_names[i]: float(feats[i]) for i in range(len(feature_names))})
         rows.append(row)
 
     df = pd.DataFrame(rows).set_index("instance")
@@ -138,4 +131,4 @@ if __name__ == "__main__":
     # overall summary statistics across 100 instances
     print("\nAggregate summary over 100 instances:")
     print(df.describe().T[["mean", "std", "min", "25%", "50%", "75%", "max"]])
-    df.to_csv("exc_1_model/summary_instance_features.csv")
+    # df.to_csv("exc_1_model/summary_instance_features.csv")
