@@ -1,5 +1,6 @@
 import datetime
 import os
+import math
 import random
 from collections import deque
 
@@ -118,13 +119,14 @@ class DeepQEnv(gym.Env):
             "step_idx": i,  # decision index
             "action": action,
             "reward": reward,
-            "penalty": penalty,
-            "bonus": bonus,
-            "remaining_capacity": self.remaining_capacity,
         }
+        info["penalty"] = info.get("penalty", 0) + math.ceil(penalty) if penalty else 0
+        info["bonus"] = info.get("bonus", 0) + math.ceil(bonus) if bonus else 0
+        info["remaining_capacity"] = (self.remaining_capacity,)
 
         if terminated:
             info["final_profit"] = self.current_profit
+            info["remaining_capacity"] = self.remaining_capacity
 
         return self._get_obs(), float(reward), terminated, truncated, info
 
@@ -423,6 +425,13 @@ class DeepQAgent:
             tf.summary.scalar(
                 "train/q_max", self.qvals[-1]["max_q"], step=self.train_steps
             )
+            tf.summary.scalar(
+                "train/n_penalties", self.penalties[-1], step=self.train_steps
+            )
+            tf.summary.scalar("train/n_bonuses", self.bonuses[-1], step=self.train_steps)
+            tf.summary.scalar(
+                "train/remaining_capacity", self.remaining_caps[-1], step=self.train_steps
+            )
         return self.losses[-1]
 
     def soft_update_target_network(self):
@@ -575,18 +584,18 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     save = True
-    num_episodes = 5000
-    print_interval = 100
+    num_episodes = 250
+    print_interval = 5
     agent_config = {
         "batch_size": 64,
         "gamma": 0.975,
         "tau": 0.005,
         "epsilon": 1.0,
         "epsilon_min": 0.05,
-        "epsilon_decay": 0.995,
-        "lr": 3e-4,
+        "epsilon_decay": 0.98,
+        "lr": 3e-2,
         "memory_size": 100000,
-        "warmup_steps": 1000,
+        "warmup_steps": 10,
     }
 
     # Load training instances
