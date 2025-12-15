@@ -21,13 +21,6 @@ figures/
 plots/
 images/
 
-# --- Figures / Plots ---
-*.png
-*.jpg
-*.jpeg
-*.svg
-*.gif
-*.pdf
 
 # Folders met data
 data/
@@ -36,7 +29,6 @@ raw/
 processed/
 
 # --- Data bestanden---
-*.csv
 *.xlsx
 *.xls
 *.parquet
@@ -45,7 +37,4 @@ processed/
 Lab9_codes/*
 archive/*
 logs/*
-exc_2_plots/ *
-
-exc_1_plots/*
 logs_exc1/*

@@ -5,7 +5,6 @@
 # output file results2.txt containing one row per instance, where each row should contain a single
 # number representing the solution value obtained by the deep Q-learning heuristic for that instance
 # (see the file performance_example2.py for an example).
-from e2_training_deep_q import load_agent, QEnv, QAgent
 
 
 # ---------------------------------------------------------------------
@@ -43,15 +42,16 @@ def run_hyperheuristic(instance_file, instance_id):
 # ---------------------------------------------------------------------
 # Evaluate the subset of 20 instances and print the results in a file
 # ---------------------------------------------------------------------
-NUM_INSTANCES = 10
-RESULTS_FILE = "results2.txt"
+if __name__ == "__main__":
+    NUM_INSTANCES = 10
+    RESULTS_FILE = "results2.txt"
 
-results = []
-for i in range(NUM_INSTANCES):
-    instance_file = f"InstancesEx2/instance{i}.txt"
-    value = run_hyperheuristic(instance_file, instance_id=i)
-    results.append(value)
+    results = []
+    for i in range(NUM_INSTANCES):
+        instance_file = f"InstancesEx2/instance{i}.txt"
+        value = run_hyperheuristic(instance_file, instance_id=i)
+        results.append(value)
 
-with open(RESULTS_FILE, "w") as f:
-    for val in results:
-        f.write(f"{val}\n")
+    with open(RESULTS_FILE, "w") as f:
+        for val in results:
+            f.write(f"{val}\n")

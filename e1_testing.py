@@ -51,17 +51,12 @@ def greedy_qkp(
     selected = set()
     remaining_capacity = capacity
     while remaining_capacity > 0:
-        if (
-            stopping_criterion is not None
-            and len(selected) >= stopping_criterion
-        ):
+        if stopping_criterion is not None and len(selected) >= stopping_criterion:
             break
 
         # feasible items that still fit
         candidates = [
-            i
-            for i in range(n)
-            if i not in selected and weights[i] <= remaining_capacity
+            i for i in range(n) if i not in selected and weights[i] <= remaining_capacity
         ]
 
         if not candidates:
@@ -174,9 +169,7 @@ def solve_reduced_ilp(weights, profits, quad_profits, capacity, selected):
                 m.addConstr(y[i, j] == 1)
 
     # 4. Capacity constraint
-    weight_fixed = sum(
-        weights[i] for i in S
-    )  # total weight of fixed items in S
+    weight_fixed = sum(weights[i] for i in S)  # total weight of fixed items in S
 
     m.addConstr(
         weight_fixed + sum(weights[i] * x[i] for i in R) <= capacity,
@@ -199,9 +192,7 @@ def solve_reduced_ilp(weights, profits, quad_profits, capacity, selected):
     # 6. Objective = linear + quadratic terms
     constant_profits = sum(profits[i] for i in S)  # already selected items
     # constant profits from newly selected items
-    linear_profit = sum(
-        profits[i] * x[i] for i in R
-    )  # Variable lineair profits
+    linear_profit = sum(profits[i] * x[i] for i in R)  # Variable lineair profits
     quad_profit = sum(
         quad_profits[i][j] * y[i, j] for i in range(n) for j in range(i + 1, n)
     )
@@ -255,9 +246,7 @@ if __name__ == "__main__":
     for dataset in ["train", "test"]:
         print(f"\n--- DATASET: {dataset.upper()} ---\n")
         instance_folder = f"InstancesEx1_{dataset}/"
-        instance_files = [
-            f for f in os.listdir(instance_folder) if f.endswith(".txt")
-        ]
+        instance_files = [f for f in os.listdir(instance_folder) if f.endswith(".txt")]
 
         instance_files = random.sample(instance_files, 50)
 
@@ -279,9 +268,7 @@ if __name__ == "__main__":
             # Full ILP
             # ---------------------------
             t0 = time.time()
-            ilp_profit, x_ilp, ilp_status = solve_ilp(
-                weights, profits, quad, cap
-            )
+            ilp_profit, x_ilp, ilp_status = solve_ilp(weights, profits, quad, cap)
             ilp_time = time.time() - t0
 
             # ---------------------------
@@ -295,9 +282,7 @@ if __name__ == "__main__":
             rl_stopping = rl_result["chosen_threshold"]
 
             # Calculate relative improvements
-            rel_improvement_greedy = (
-                (rl_profit - greedy_profit) / greedy_profit * 100
-            )
+            rel_improvement_greedy = (rl_profit - greedy_profit) / greedy_profit * 100
             rel_improvement_full = (rl_profit - ilp_profit) / ilp_profit * 100
             combined_score = (
                 (rl_profit - greedy_profit) / (ilp_profit - greedy_profit) * 100

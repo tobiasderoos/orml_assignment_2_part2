@@ -27,8 +27,6 @@ from e1_testing import (
     solve_reduced_ilp,
 )
 
-from e1_performance import read_instance
-
 
 class QLearning:
     """
@@ -166,9 +164,7 @@ class QLearning:
         # Greedy packing
         sorted_indices = np.argsort(pw)[::-1]
         cumulative_weight = np.cumsum(w[sorted_indices])
-        items_that_fit = int(
-            np.searchsorted(cumulative_weight, capacity, side="right")
-        )
+        items_that_fit = int(np.searchsorted(cumulative_weight, capacity, side="right"))
         fit_ratio = items_that_fit / n
         cap_tight_mean = capacity / w.mean()
 
@@ -241,9 +237,7 @@ class QLearning:
         if key in self.reduced_ilp_cache:
             return self.reduced_ilp_cache[key]
 
-        obj, x, status = solve_reduced_ilp(
-            weights, profits, quad, capacity, fixed_items
-        )
+        obj, x, status = solve_reduced_ilp(weights, profits, quad, capacity, fixed_items)
         self.reduced_ilp_cache[key] = (obj, x, status)
         return obj, x, status
 
@@ -293,10 +287,7 @@ class QLearning:
             greedy_action_idx = self.pick_random_best_action(q_values)
 
             # ε-greedy selection
-            if (
-                self.epsilon > self.epsilon_min
-                and np.random.rand() < self.epsilon
-            ):
+            if self.epsilon > self.epsilon_min and np.random.rand() < self.epsilon:
                 action_idx = np.random.choice(self.n_actions)
             else:
                 action_idx = greedy_action_idx
@@ -316,9 +307,7 @@ class QLearning:
 
             remaining = capacity - sum(weights[i] for i in greedy_sel)
             candidates = [
-                i
-                for i in range(n)
-                if i not in greedy_sel and weights[i] <= remaining
+                i for i in range(n) if i not in greedy_sel and weights[i] <= remaining
             ]
 
             if not candidates:
@@ -372,15 +361,9 @@ class QLearning:
 
             sorted_q = np.sort(q_values)
 
-            q_gap_1_2 = (
-                sorted_q[-1] - sorted_q[-2] if len(sorted_q) >= 2 else 0.0
-            )
-            q_gap_1_5 = (
-                sorted_q[-1] - sorted_q[-5] if len(sorted_q) >= 5 else 0.0
-            )
-            q_gap_1_10 = (
-                sorted_q[-1] - sorted_q[-10] if len(sorted_q) >= 10 else 0.0
-            )
+            q_gap_1_2 = sorted_q[-1] - sorted_q[-2] if len(sorted_q) >= 2 else 0.0
+            q_gap_1_5 = sorted_q[-1] - sorted_q[-5] if len(sorted_q) >= 5 else 0.0
+            q_gap_1_10 = sorted_q[-1] - sorted_q[-10] if len(sorted_q) >= 10 else 0.0
 
             # Save Q-range metric
             self.q_value_history.append(q_values.max() - q_values.min())
@@ -390,13 +373,9 @@ class QLearning:
             self.writer.add_scalar("Rewards/Penalty", penalty, ep)
             self.writer.add_scalar("Rewards/TimeBonus", time_bonus, ep)
             self.writer.add_scalar("Actions/ChosenAction", action_idx, ep)
-            self.writer.add_scalar(
-                "Actions/GreedyAction", best_possible_action, ep
-            )
+            self.writer.add_scalar("Actions/GreedyAction", best_possible_action, ep)
             self.writer.add_scalar("Rewards/RewardQDiff", diff, ep)
-            self.writer.add_scalar(
-                "Q/QValueRange", q_values.max() - q_values.min(), ep
-            )
+            self.writer.add_scalar("Q/QValueRange", q_values.max() - q_values.min(), ep)
             self.writer.add_scalar("Q/QGap/1_2", q_gap_1_2, ep)
             self.writer.add_scalar("Q/QGap/1_5", q_gap_1_5, ep)
             self.writer.add_scalar("Q/QGap/1_10", q_gap_1_10, ep)
@@ -405,9 +384,7 @@ class QLearning:
             self.writer.add_scalar("StatusRILP", status, ep)
 
             # Update epsilon
-            self.epsilon = max(
-                self.epsilon_min, self.epsilon * self.epsilon_decay
-            )
+            self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
             # Write results
             file_path = "exc_1_model/train_results.csv"
             file_exists = os.path.isfile(file_path)
@@ -473,9 +450,7 @@ class QLearning:
         remaining = capacity - sum(weights[i] for i in greedy_sel)
 
         candidates = [
-            i
-            for i in range(n)
-            if i not in greedy_sel and weights[i] <= remaining
+            i for i in range(n) if i not in greedy_sel and weights[i] <= remaining
         ]
 
         if not candidates:
@@ -501,6 +476,8 @@ class QLearning:
 
 
 if __name__ == "__main__":
+    from e1_performance import read_instance
+
     instance_folder = "InstancesEx1_200"
     instance_files = sorted(
         os.path.join(instance_folder, f)

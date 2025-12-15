@@ -14,14 +14,6 @@ def smooth_ema(data, alpha=0.1):
     return smoothed
 
 
-def smooth_ema(data, alpha=0.05):
-    smoothed = np.zeros_like(data, dtype=float)
-    smoothed[0] = data[0]
-    for t in range(1, len(data)):
-        smoothed[t] = alpha * data[t] + (1 - alpha) * smoothed[t - 1]
-    return smoothed
-
-
 # parameters
 window = 100
 alpha = 0.05
@@ -32,6 +24,7 @@ epsilon_min_episode = data.loc[data["epsilon"] <= 0.1, "episode"].iloc[0]
 # ---------------------
 ema = smooth_ema(data["diff"].values, alpha=alpha)
 rolling_std = pd.Series(data["diff"]).rolling(window=window, min_periods=1).std().values
+
 
 plt.figure()
 plt.plot(data["episode"], ema, label="EMA")
