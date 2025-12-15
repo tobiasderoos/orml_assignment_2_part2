@@ -111,15 +111,15 @@ class DeepQEnv(gym.Env):
 
         else:  # action == 0 (SKIP)
             if fits:
-                reward -= 0.5 * self.profits[i] / self.max_gain
+                reward -= 0 * self.profits[i] / self.max_gain
                 self.n_opportunities += 1
             if not fits:
                 reward += 0.1
                 self.n_bonuses += 1
         self.current_step += 1
 
-        terminated = self.current_step >= self.n
-        truncated = self.remaining_capacity <= 0 and not terminated
+        terminated = self.current_step >= self.n or self.remaining_capacity <= 0
+        # truncated = self.remaining_capacity <= 0 and not terminated
 
         info = {
             "instance_id": self.instance_id,
@@ -423,6 +423,7 @@ class DeepQAgent:
 
         with self.writer.as_default():
             tf.summary.scalar("train/loss", self.losses[-1], step=self.train_steps)
+            tf.summary.scalar("train/reward", reward, step=self.train_steps)
             tf.summary.scalar(
                 "train/td_mean", self.tds[-1]["mean_diff"], step=self.train_steps
             )
