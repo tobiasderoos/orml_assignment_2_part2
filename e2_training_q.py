@@ -126,7 +126,7 @@ class DeepQEnv(gym.Env):
             "step_idx": i,  # decision index
             "action": action,
             "reward": reward,
-            "lost opportunities": self.n_opportunities,
+            "lost_opportunities": self.n_opportunities,
             "penalties": self.n_penalty,
             "bonuses": self.n_bonuses,
             "remaining_capacity": self.remaining_capacity,
@@ -290,6 +290,11 @@ class DeepQAgent:
         self.penalties = []
         self.bonuses = []
         self.remaining_caps = []
+        self.episode_td_means = []
+        self.episode_td_mins = []
+        self.episode_td_maxs = []
+
+        self.network_diffs = []
 
         log_dir = "logs/dqn_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         os.makedirs(log_dir, exist_ok=True)
@@ -309,6 +314,11 @@ class DeepQAgent:
                         "instance_id",
                         "epsilon",
                         "total_reward",
+                        "td_diff_mean",
+                        "td_diff_max",
+                        "td_diff_min",
+                        "network_diff",
+                        "lost_opportunities",
                         "final_profit",
                         "n_penalties",
                         "n_bonuses",
@@ -334,6 +344,13 @@ class DeepQAgent:
                         "remaining_capacity",
                     ]
                 )
+
+    def _network_distance(self):
+        online_weights = self.online_model.get_weights()
+        target_weight = self.target_model.get_weights()
+        return np.mean(
+            [np.linalg.norm(ow - tw) for ow, tw in zip(online_weights, target_weight)]
+        )
 
     # ------------------------
     # Model
@@ -404,6 +421,7 @@ class DeepQAgent:
 
         self.train_steps += 1
         self.soft_update_target_network()
+        self.network_diffs.append(self._network_distance())
 
         self.losses.append(float(history.history["loss"][0]))
         self.tds.append(
@@ -437,11 +455,7 @@ class DeepQAgent:
                 "train/q_max", self.qvals[-1]["max_q"], step=self.train_steps
             )
             tf.summary.scalar(
-                "train/n_penalties", self.penalties[-1], step=self.train_steps
-            )
-            tf.summary.scalar("train/n_bonuses", self.bonuses[-1], step=self.train_steps)
-            tf.summary.scalar(
-                "train/remaining_capacity", self.remaining_caps[-1], step=self.train_steps
+                "train/network_diff", self.network_diffs[-1], step=self.train_steps
             )
         return self.losses[-1]
 
@@ -468,7 +482,7 @@ class DeepQAgent:
             action = self.act(state)
             state, reward, terminated, _, info = env.step(action)
             if terminated:
-                final_profit = info.get("final_profit", 0.0)
+                final_profit = info.get("final_profit", [0.0])
                 return final_profit
 
     @classmethod
@@ -515,7 +529,7 @@ def train_dqn(envs, agent_config, num_episodes=500, print_interval=50):
             total_reward += reward
             state = next_state
 
-            if ep % 10 == 0:
+            if ep % 25 == 0:
                 with open(agent.file_path_steps, mode="a", newline="") as f:
                     writer = csv.writer(f)
                     writer.writerow(
@@ -525,18 +539,19 @@ def train_dqn(envs, agent_config, num_episodes=500, print_interval=50):
                             info["instance_id"],
                             action,
                             reward,
-                            info.get("lost opportunities", 0),
-                            info.get("penalty", 0),
-                            info.get("bonus", 0),
+                            info["lost_opportunities"],
+                            info["penalties"],
+                            info["bonuses"],
                             info["remaining_capacity"],
                         ]
                     )
 
             if terminated:
                 agent.profits.append(info["final_profit"])
-                agent.penalties.append(info.get("penalties", 0))
-                agent.bonuses.append(info.get("bonuses", 0))
-                agent.remaining_caps.append(info.get("remaining_capacity", 0.0))
+                agent.lost_opportunities = info.get("lost_opportunities", [0])
+                agent.penalties.append(info.get("n_penalty", [0]))
+                agent.bonuses.append(info.get("n_bonuses", [0]))
+                agent.remaining_caps.append(info.get("remaining_capacity", [0]))
                 break
 
         agent.decay_epsilon(n_episodes=num_episodes)
@@ -551,37 +566,42 @@ def train_dqn(envs, agent_config, num_episodes=500, print_interval=50):
                 f"Epsilon: {agent.epsilons[-1]:.4f}"
             )
 
-        with agent.writer.as_default():
-            tf.summary.scalar(
-                "episode/profit",
-                agent.profits[-1],
-                step=agent.episode_count,
-            )
-            tf.summary.scalar(
-                "episode/epsilon",
-                agent.epsilons[-1],
-                step=agent.episode_count,
-            )
-            tf.summary.scalar(
-                "episode/penalties",
-                agent.penalties[-1],
-                step=agent.episode_count,
-            )
-            tf.summary.scalar(
-                "episode/bonuses",
-                agent.bonuses[-1],
-                step=agent.episode_count,
-            )
-            tf.summary.scalar(
-                "episode/remaining_capacity",
-                agent.remaining_caps[-1],
-                step=agent.episode_count,
-            )
+        # with agent.writer.as_default():
+        #     tf.summary.scalar(
+        #         "episode/profit",
+        #         agent.profits[-1],
+        #         step=agent.episode_count,
+        #     )
+        #     tf.summary.scalar(
+        #         "episode/epsilon",
+        #         agent.epsilons[-1],
+        #         step=agent.episode_count,
+        #     )
+        #     tf.summary.scalar(
+        #         "episode/network_diff", agent.network_diffs[-1], step=agent.episode_count
+        #     )
+        #     tf.summary()
+        #     tf.summary.scalar(
+        #         "episode/penalties",
+        #         agent.penalties[-1],
+        #         step=agent.episode_count,
+        #     )
+        #     tf.summary.scalar(
+        #         "episode/bonuses",
+        #         agent.bonuses[-1],
+        #         step=agent.episode_count,
+        #     )
+        #     tf.summary.scalar(
+        #         "episode/remaining_capacity",
+        #         agent.remaining_caps[-1],
+        #         step=agent.episode_count,
+        #     )
 
         # save model every 50 episodes
         if (ep + 1) % 500 == 0:
-            agent.save_model(agent_config["model_name"])
-            print("Temporary model saved.")
+            name_file = f"exc_2_model/dqn_qkp_model_ep{ep + 1}.keras"
+            agent.save_model(name_file)
+            print(f"Saved model to {name_file}")
         with open(agent.file_path_episode, mode="a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(
@@ -590,13 +610,18 @@ def train_dqn(envs, agent_config, num_episodes=500, print_interval=50):
                     info.get("instance_id", None),
                     agent.epsilon,
                     total_reward,
-                    info.get("final_profit", 0.0),
-                    info.get("penalties", 0),
-                    info.get("bonuses", 0),
-                    info.get("remaining_capacity", 0.0),
+                    agent.tds[-1]["mean_diff"],
+                    agent.tds[-1]["max_diff"],
+                    agent.tds[-1]["min_diff"],
+                    agent.network_diffs[-1],
+                    info.get("lost_opportunities", [0]),
+                    info.get("final_profit", [0.0]),
+                    info.get("penalties", [0]),
+                    info.get("bonuses", [0]),
+                    info.get("remaining_capacity", [0.0]),
                 ]
             )
-    agent.save_model(f["model_name"])
+    agent.save_model(agent_config["model_name"])
     return agent
 
 
@@ -607,20 +632,33 @@ if __name__ == "__main__":
     os.makedirs(model_dir, exist_ok=True)
 
     save = True
-    num_episodes = 5000
+    num_episodes = 20
     print_interval = 5
     agent_config = {
-        "batch_size": 64,
+        "batch_size": 5,
         "gamma": 0.95,
-        "tau": 0.005,
+        "tau": 0.01,
         "epsilon": 1.0,
         "epsilon_min": 0.05,
         "epsilon_decay": 0.999,
         "lr": 3e-4,
-        "memory_size": 100000,
-        "warmup_steps": 1000,
+        "memory_size": 100_000,
+        "warmup_steps": 1,
         "model_name": os.path.join(model_dir, "dqn_qkp_model.keras"),
     }
+
+    #     agent_config = {
+    #     "batch_size": 96,
+    #     "gamma": 0.95,
+    #     "tau": 0.01,
+    #     "epsilon": 1.0,
+    #     "epsilon_min": 0.05,
+    #     "epsilon_decay": 0.999,
+    #     "lr": 3e-4,
+    #     "memory_size": 100_000,
+    #     "warmup_steps": 5000,
+    #     "model_name": os.path.join(model_dir, "dqn_qkp_model.keras"),
+    # }
 
     # Load training instances
     folder = "InstancesEx2_train"

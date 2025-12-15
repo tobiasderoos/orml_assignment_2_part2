@@ -43,7 +43,7 @@ def greedy_qkp(
 
 if __name__ == "__main__":
     import os
-    from e2_training_q import DeepQEnv
+    from e2_training_q import DeepQEnv, DeepQAgent
     from e2_performanceEx2 import read_instance
 
     # Load training instances
@@ -54,12 +54,11 @@ if __name__ == "__main__":
         if fname.endswith(".txt")
     ]
     # Load Keras model
-    model = DeepQAgent.load_model("exc_2_model/exc_2_model.keras")
+    model = DeepQAgent.load_model("exc_2_model_luffy/dqn_qkp_model.keras")
 
     envs = []
 
-    greedy_profits = []
-    q_profits = []
+    results = []
 
     for i, f in enumerate(instance_files):
         n, cap, w, q = read_instance(f)
@@ -69,10 +68,42 @@ if __name__ == "__main__":
         greedy_profit = greedy_qkp(n, w, p, q, cap)
         Q_profit = model.evaluate(envs[i])
 
-        greedy_profits.append(greedy_profit)
-        q_profits.append(Q_profit)
         improvement = 100 * (Q_profit - greedy_profit) / abs(greedy_profit)
 
-        print(
-            f"Instance {i:02d} | Greedy: {greedy_profit:.2f} | Q: {Q_profit:.2f}, Improvement: {improvement:.2f}%"
+        results.append(
+            {
+                "instance": i,
+                "greedy_profit": float(greedy_profit),
+                "q_profit": float(Q_profit),
+                "improvement_pct": float(improvement),
+            }
         )
+
+        print(
+            f"Instance {i:02d} | Greedy: {greedy_profit:.2f} | "
+            f"Q: {Q_profit:.2f} | Improvement: {improvement:.2f}%"
+        )
+
+    df = pd.DataFrame(results)
+    df.set_index("instance", inplace=True)
+
+    numeric_cols = ["greedy_profit", "q_profit", "improvement_pct"]
+
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="raise")
+
+    summary = pd.DataFrame(
+        {
+            "metric": ["greedy_profit", "q_profit", "improvement_pct"],
+            "min": [df.greedy_profit.min(), df.q_profit.min(), df.improvement_pct.min()],
+            "max": [df.greedy_profit.max(), df.q_profit.max(), df.improvement_pct.max()],
+            "mean": [
+                df.greedy_profit.mean(),
+                df.q_profit.mean(),
+                df.improvement_pct.mean(),
+            ],
+            "std": [df.greedy_profit.std(), df.q_profit.std(), df.improvement_pct.std()],
+        }
+    )
+
+    summary.to_csv("exc_2_results/e2_testing_summary.csv", index=False)
