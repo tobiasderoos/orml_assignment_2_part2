@@ -5,8 +5,7 @@ import tqdm
 import time
 import numpy as np
 import matplotlib.pyplot as plt
-from collections import defaultdict
-
+from collections import defaultdict, deque
 from scipy.stats import skew
 from datetime import datetime
 from gurobipy import GRB
@@ -24,9 +23,29 @@ from e1_testing import (
 from e2_performanceEx2 import read_instance
 
 
+class ReplayBuffer:
+    def __init__(self, capacity=50000):
+        self.buffer = deque(maxlen=capacity)
+
+    def add(self, state, action, reward):
+        self.buffer.append((state, action, reward))
+
+    def sample(self, batch_size):
+        batch = random.sample(self.buffer, batch_size)
+        states, actions, rewards = zip(*batch)
+        return (
+            np.array(states, dtype=np.float32),
+            np.array(actions),
+            np.array(rewards, dtype=np.float32),
+        )
+
+    def __len__(self):
+        return len(self.buffer)
+
+
 class FeatureExtractor:
     def __init__(self):
-        self.feature_dim = 11
+        self.feature_dim = 12
 
     def extract(self, n, weights, profits, quad, capacity):
         w = np.array(weights, dtype=np.float32)
@@ -38,7 +57,7 @@ class FeatureExtractor:
         pw_std = pw.std()
         pw_cv = pw_std / pw_mean
         pw_skew = skew(pw)
-        # gini_pw = self._gini(pw)
+        gini_pw = self._gini(pw)
 
         pw_iw_corr = np.corrcoef(p, w)[0, 1]
 
@@ -73,7 +92,7 @@ class FeatureExtractor:
                 delta_median,
                 delta_cv,
                 delta_skew,
-                # gini_pw
+                gini_pw,
                 pw_cv,
                 pw_skew,
                 pw_iw_corr,
@@ -84,7 +103,7 @@ class FeatureExtractor:
             ],
             dtype=np.float32,
         )
-
+        feats = np.nan_to_num(feats, nan=0.0)
         return feats.reshape(1, -1)
 
     def _gini(self, x):
@@ -99,7 +118,7 @@ class DQNAgent:
         n_actions,
         feature_dim,
         lr=3e-4,
-        epsilon_decay=0.999,
+        epsilon_decay=0.9995,
         epsilon_min=0.1,
         batch=32,
     ):
@@ -113,6 +132,9 @@ class DQNAgent:
 
         self.q_min, self.q_max = -5.0, 10.0
         self.model = self._build_model(feature_dim)
+
+        self.replay = ReplayBuffer(capacity=30000)
+        self.warm_up = 250
 
     def _build_model(self, dim):
         inp = layers.Input(shape=(dim,))
@@ -171,22 +193,20 @@ def train(
         csv_writer = csv.writer(f)
         if not file_exists:
             csv_writer.writerow(
-                [
+                [  # episode, loss, epsilon, reward, action, greedy action, q_range, q_mean, stopping, profit, reward_diff
                     "episode",
-                    "instance",
                     "loss",
                     "epsilon",
                     "reward",
                     "action",
                     "greedy_action",
                     "q_range",
+                    "q_mean",
                     "stopping_threshold",
-                    "true_reward",
-                    "shaped_true",
+                    "profit",
                     "reward_diff",
                 ]
             )
-        batch_states, batch_actions, batch_rewards = [], [], []
 
         for ep in tqdm.tqdm(range(n_episodes)):
             file = random.choice(instance_files)
@@ -195,6 +215,8 @@ def train(
 
             state = extractor.extract(n, w, p, Q, cap)
             action_idx, q = agent.act(state)
+            q_sa = q[action_idx]
+
             greedy_idx = int(np.flatnonzero(q == q.max())[-1])
             stopping = actions[action_idx]
 
@@ -203,9 +225,13 @@ def train(
             # Baseline greedy (no stopping)
             greedy_full = greedy_qkp(w, p, Q, cap, None)
             greedy_profit = compute_profit(greedy_full, p, Q)
+            td_error = 0.0
+            true_reward = 0.0
+            status = None
+            obj = greedy_profit
 
             if key in rilp_cache:
-                obj, status, reward = rilp_cache[key]
+                obj, status, true_reward, reward = rilp_cache[key]
             else:
                 # Greedy with stopping threshold
                 greedy_sel = greedy_qkp(w, p, Q, cap, stopping)
@@ -216,13 +242,13 @@ def train(
                 ]
                 if not candidates:
                     reward = -2.0
+                    obj = greedy_profit
+                    true_reward = 0.0
+                    td_error = 0.0
+                    reward = -2.0
                 else:
                     start = time.time()
                     obj, _, status = solve_reduced_ilp(w, p, Q, cap, greedy_sel)
-                    # reward = (
-                    #     ((obj / greedy_profit) - 1.0) * 15.0 if obj is not None else -2.0
-                    # )
-
                     true_reward = (obj / greedy_profit) - 1.0
                     reward = true_reward * 15.0
                     end = time.time()
@@ -233,59 +259,52 @@ def train(
                     elif status == GRB.Status.OPTIMAL:
                         reward += 0.25 * ((end - start) / 15.0)
                     reward = np.clip(reward, agent.q_min, agent.q_max)
+                    td_error = abs(q_sa - reward)
 
-                rilp_cache[key] = (obj, status, reward)
+                rilp_cache[key] = (obj, status, true_reward, reward)
 
-            # Calculate true predicted reward
-            shaped_true = true_reward * 15.0
-            reward_diff = reward - shaped_true
-
-            # collect batch sample
-            batch_states.append(state.squeeze())
-            batch_actions.append(action_idx)
-            batch_rewards.append(float(reward))
+            # add batch sample
+            agent.replay.add(state.squeeze(), action_idx, float(reward))
 
             # when batch full, train
-            loss = 0
-            if len(batch_states) >= batch_size:
-                states = np.array(batch_states, dtype=np.float32)
-                q_preds = agent.model.predict(states, verbose=0)
+            loss = 0.0
+            if len(agent.replay) >= agent.warm_up:
+                states, actions_b, rewards_b = agent.replay.sample(batch_size)
 
-                for i, a in enumerate(batch_actions):
-                    q_preds[i, a] = batch_rewards[i]
+                q_preds = agent.model.predict(states, verbose=0)
+                for i, a in enumerate(actions_b):
+                    q_preds[i, a] = rewards_b[i]
 
                 loss = agent.model.train_on_batch(states, q_preds)
                 writer.add_scalar("Loss", loss, ep)
 
-                batch_states, batch_actions, batch_rewards = [], [], []
-
                 # logging per episode
             q_range = float(q.max() - q.min())
-            writer.add_scalar("Reward", reward, ep)
-            writer.add_scalar("QRange", q_range, ep)
+            q_mean = np.mean(q)
+            writer.add_scalar("Loss", loss, ep)
             writer.add_scalar("Epsilon", agent.epsilon, ep)
-            writer.add_scalar("ChosenAction", actions[action_idx], ep)
+            writer.add_scalar("Reward", reward, ep)
+            writer.add_scalar("Action", actions[action_idx], ep)
             writer.add_scalar("GreedyAction", actions[greedy_idx], ep)
-            writer.add_scalar("Profit", obj, ep)
-            writer.add_scalar("StoppingThreshold", stopping, ep)
-            writer.add_scalar("TrueReward", true_reward, ep)
-            writer.add_scalar("ShapedRewardBase", shaped_true, ep)
-            writer.add_scalar("RewardDiff", reward_diff, ep)
+            writer.add_scalar("Q/Range", q_range, ep)
+            writer.add_scalar("Q/Mean", q_mean, ep)
+            writer.add_scalar("Stopping", stopping, ep)
+            writer.add_scalar("Profit", true_reward, ep)
+            writer.add_scalar("reward_diff", td_error, ep)
 
             csv_writer.writerow(
-                [
+                [  # episode instance, loss, epsilon, reward, action, greedy action, q_range, q_mean, stopping, profit, reward_diff
                     ep,
-                    file,
                     loss,
                     agent.epsilon,
                     reward,
-                    action_idx,
-                    greedy_idx,
+                    actions[action_idx],
+                    actions[greedy_idx],
                     q_range,
+                    q_mean,
                     stopping,
                     true_reward,
-                    shaped_true,
-                    reward_diff,
+                    td_error,
                 ]
             )
 
@@ -317,7 +336,7 @@ if __name__ == "__main__":
 
     # Train settings
     store_dir = "exc_1_results_new"
-    n_episodes = 4000
+    n_episodes = 3000
     batch_size = 32
 
     extractor = FeatureExtractor()
@@ -325,7 +344,7 @@ if __name__ == "__main__":
         n_actions=len(actions),
         feature_dim=extractor.feature_dim,
         lr=3e-4,
-        epsilon_decay=0.999,
+        epsilon_decay=0.9975,
         epsilon_min=0.05,
     )
 
