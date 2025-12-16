@@ -15,7 +15,7 @@ def smooth_ema(data, alpha=0.1):
 
 
 # parameters
-window = 100
+window = 25
 alpha = 0.05
 epsilon_min_episode = data.loc[data["epsilon"] <= 0.1, "episode"].iloc[0]
 
@@ -27,7 +27,7 @@ rolling_std = pd.Series(data["diff"]).rolling(window=window, min_periods=1).std(
 
 
 plt.figure()
-plt.plot(data["episode"], ema, label="EMA")
+plt.plot(data["episode"], ema, label="EMA ($\\alpha$=0.05)".format(alpha))
 plt.fill_between(
     data["episode"],
     ema - rolling_std,
@@ -48,21 +48,12 @@ plt.axvline(
 )
 plt.axvspan(0, 200, alpha=0.08, color="gray", label="Warm-up")
 plt.legend(fontsize=8)
-plt.show()
-
-# ---------------------
-# Plot Epsilon Decay
-# ---------------------
-plt.figure()
-plt.plot(data["episode"], data["epsilon"], color="blue")
-plt.xlabel("Episode")
-plt.ylabel("Epsilon")
+plt.savefig("exc_1_plots/q_reward_diff.pdf", dpi=300)
 plt.show()
 
 # ---------------------
 # Plot dominant greedy action with rolling window
 # ---------------------
-window = 25
 
 
 def action_entropy(x):
@@ -87,7 +78,7 @@ plt.axvspan(0, 200, alpha=0.08, color="gray", label="Warm-up")
 plt.xlabel("Episode")
 plt.ylabel("Action entropy")
 plt.legend(fontsize=8)
-
+plt.savefig("exc_1_plots/greedy_action_entropy.pdf", dpi=300)
 plt.show()
 
 
@@ -102,7 +93,7 @@ rolling_std = (
 
 
 plt.figure()
-plt.plot(data["episode"], ema, label="EMA")
+plt.plot(data["episode"], ema, label="EMA ($\\alpha$=0.05)")
 plt.fill_between(
     data["episode"],
     ema - rolling_std,
@@ -124,6 +115,7 @@ plt.axvline(
 plt.axvspan(0, 200, alpha=0.08, color="gray", label="Warm-up")
 
 plt.legend(fontsize=8)
+plt.savefig("exc_1_plots/q_value_range.pdf", dpi=300)
 plt.show()
 
 # ----------------------

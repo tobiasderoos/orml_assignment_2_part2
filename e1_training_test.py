@@ -73,6 +73,7 @@ class FeatureExtractor:
                 delta_median,
                 delta_cv,
                 delta_skew,
+                # gini_pw
                 pw_cv,
                 pw_skew,
                 pw_iw_corr,
@@ -180,6 +181,9 @@ def train(
                     "greedy_action",
                     "q_range",
                     "stopping_threshold",
+                    "true_reward",
+                    "shaped_true",
+                    "reward_diff",
                 ]
             )
         batch_states, batch_actions, batch_rewards = [], [], []
@@ -215,9 +219,12 @@ def train(
                 else:
                     start = time.time()
                     obj, _, status = solve_reduced_ilp(w, p, Q, cap, greedy_sel)
-                    reward = (
-                        ((obj / greedy_profit) - 1.0) * 15.0 if obj is not None else -2.0
-                    )
+                    # reward = (
+                    #     ((obj / greedy_profit) - 1.0) * 15.0 if obj is not None else -2.0
+                    # )
+
+                    true_reward = (obj / greedy_profit) - 1.0
+                    reward = true_reward * 15.0
                     end = time.time()
                     if status == GRB.Status.TIME_LIMIT:
                         reward -= 0.5
@@ -226,6 +233,10 @@ def train(
                     elif status == GRB.Status.OPTIMAL:
                         reward += 0.25 * ((end - start) / 15.0)
                 rilp_cache[key] = (obj, status, reward)
+
+            # Calculate true predicted reward
+            shaped_true = true_reward * 15.0
+            reward_diff = reward - shaped_true
 
             # collect batch sample
             batch_states.append(state.squeeze())
@@ -255,6 +266,9 @@ def train(
             writer.add_scalar("GreedyAction", actions[greedy_idx], ep)
             writer.add_scalar("Profit", obj, ep)
             writer.add_scalar("StoppingThreshold", stopping, ep)
+            writer.add_scalar("TrueReward", true_reward, ep)
+            writer.add_scalar("ShapedRewardBase", shaped_true, ep)
+            writer.add_scalar("RewardDiff", reward_diff, ep)
 
             csv_writer.writerow(
                 [
@@ -267,6 +281,9 @@ def train(
                     greedy_idx,
                     q_range,
                     stopping,
+                    true_reward,
+                    shaped_true,
+                    reward_diff,
                 ]
             )
 
