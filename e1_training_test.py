@@ -1,9 +1,6 @@
 import os
-import yaml
-import pickle
 import random
 import csv
-import shutil
 import tqdm
 import time
 import numpy as np
@@ -11,7 +8,6 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 
 from scipy.stats import skew
-from scipy.stats import kendalltau
 from datetime import datetime
 from gurobipy import GRB
 from torch.utils.tensorboard import SummaryWriter
@@ -160,20 +156,27 @@ def train(
 ):
     os.makedirs(store_dir, exist_ok=True)
     csv_path = os.path.join(store_dir, "train_results.csv")
-    with open(csv_path, "w", newline="") as f:
+
+    rilp_cache = {}
+
+    file_exists = os.path.isfile(csv_path)
+
+    with open(csv_path, "a", newline="") as f:
         csv_writer = csv.writer(f)
-        csv_writer.writerow(
-            [
-                "episode",
-                "instance",
-                "loss",
-                "epsilon",
-                "reward",
-                "action",
-                "greedy_action",
-                "q_range",
-            ]
-        )
+        if not file_exists:
+            csv_writer.writerow(
+                [
+                    "episode",
+                    "instance",
+                    "loss",
+                    "epsilon",
+                    "reward",
+                    "action",
+                    "greedy_action",
+                    "q_range",
+                    "stopping_threshold",
+                ]
+            )
         batch_states, batch_actions, batch_rewards = [], [], []
 
         for ep in tqdm.tqdm(range(n_episodes)):
@@ -183,46 +186,49 @@ def train(
 
             state = extractor.extract(n, w, p, Q, cap)
             action_idx, q = agent.act(state)
-            greedy_idx = int(np.argmax(q))
+            greedy_idx = int(np.flatnonzero(q == q.max())[-1])
             stopping = actions[action_idx]
+
+            key = (file, stopping)
 
             # Baseline greedy (no stopping)
             greedy_full = greedy_qkp(w, p, Q, cap, None)
             greedy_profit = compute_profit(greedy_full, p, Q)
 
-            # Greedy with stopping threshold
-            greedy_sel = greedy_qkp(w, p, Q, cap, stopping)
-
-            remaining = cap - sum(w[i] for i in greedy_sel)
-            candidates = [
-                i for i in range(n) if i not in greedy_sel and w[i] <= remaining
-            ]
-
-            if not candidates:
-                reward = -2.0
+            if key in rilp_cache:
+                obj, status, reward = rilp_cache[key]
             else:
-                start = time.time()
-                obj, _, status = solve_reduced_ilp(w, p, Q, cap, greedy_sel)
-                reward = ((obj / greedy_profit) - 1.0) * 15.0 if obj is not None else -2.0
-                end = time.time()
-                if status == GRB.Status.TIME_LIMIT:
-                    reward -= 0.5
-                elif status == GRB.Status.INFEASIBLE:
-                    reward -= -2.0
-                elif status == GRB.Status.OPTIMAL:
-                    reward += 0.25 * ((end - start) / 15.0)
+                # Greedy with stopping threshold
+                greedy_sel = greedy_qkp(w, p, Q, cap, stopping)
+
+                remaining = cap - sum(w[i] for i in greedy_sel)
+                candidates = [
+                    i for i in range(n) if i not in greedy_sel and w[i] <= remaining
+                ]
+                if not candidates:
+                    reward = -2.0
+                else:
+                    start = time.time()
+                    obj, _, status = solve_reduced_ilp(w, p, Q, cap, greedy_sel)
+                    reward = (
+                        ((obj / greedy_profit) - 1.0) * 15.0 if obj is not None else -2.0
+                    )
+                    end = time.time()
+                    if status == GRB.Status.TIME_LIMIT:
+                        reward -= 0.5
+                    elif status == GRB.Status.INFEASIBLE:
+                        reward -= -2.0
+                    elif status == GRB.Status.OPTIMAL:
+                        reward += 0.25 * ((end - start) / 15.0)
+                rilp_cache[key] = (obj, status, reward)
 
             # collect batch sample
             batch_states.append(state.squeeze())
             batch_actions.append(action_idx)
             batch_rewards.append(float(reward))
 
-            # logging per episode
-            q_range = float(q.max() - q.min())
-            writer.add_scalar("Reward", reward, ep)
-            writer.add_scalar("QRange", q_range, ep)
-            writer.add_scalar("Epsilon", agent.epsilon, ep)
             # when batch full, train
+            loss = 0
             if len(batch_states) >= batch_size:
                 states = np.array(batch_states, dtype=np.float32)
                 q_preds = agent.model.predict(states, verbose=0)
@@ -232,14 +238,34 @@ def train(
 
                 loss = agent.model.train_on_batch(states, q_preds)
                 writer.add_scalar("Loss", loss, ep)
-                csv_writer.writerow(
-                    [ep, file, agent.epsilon, reward, action_idx, greedy_idx, q_range]
-                )
 
                 batch_states, batch_actions, batch_rewards = [], [], []
 
-            # epsilon decay per episode
-            agent.decay_epsilon()
+                # logging per episode
+            q_range = float(q.max() - q.min())
+            writer.add_scalar("Reward", reward, ep)
+            writer.add_scalar("QRange", q_range, ep)
+            writer.add_scalar("Epsilon", agent.epsilon, ep)
+            writer.add_scalar("ChosenAction", actions[action_idx], ep)
+            writer.add_scalar("GreedyAction", actions[greedy_idx], ep)
+            writer.add_scalar("Profit", obj, ep)
+            writer.add_scalar("StoppingThreshold", stopping, ep)
+
+            csv_writer.writerow(
+                [
+                    ep,
+                    file,
+                    loss,
+                    agent.epsilon,
+                    reward,
+                    action_idx,
+                    greedy_idx,
+                    q_range,
+                    stopping,
+                ]
+            )
+
+            f.flush()
 
             # Store model every 500 episodes
             if (ep + 1) % 500 == 0:
@@ -247,12 +273,15 @@ def train(
                 agent.model.save(model_path)
                 print(f"Saved model to: {model_path}")
 
+            # epsilon decay per episode
+            agent.decay_epsilon()
+
     writer.close()
 
 
 if __name__ == "__main__":
     # Instances folder
-    instance_dir = "InstancesEx1_train_new"
+    instance_dir = "InstancesEx1_train"
     instance_files = [
         os.path.join(instance_dir, fname)
         for fname in os.listdir(instance_dir)
@@ -264,7 +293,7 @@ if __name__ == "__main__":
 
     # Train settings
     store_dir = "exc_1_results_new"
-    n_episodes = 10000
+    n_episodes = 5000
     batch_size = 32
 
     extractor = FeatureExtractor()
@@ -290,6 +319,6 @@ if __name__ == "__main__":
         store_dir=store_dir,
     )
 
-    model_path = os.path.join(store_dir, "dqn_model.keras")
+    model_path = os.path.join(store_dir, "dqn_model_final.keras")
     agent.model.save(model_path)
     print(f"Saved model to: {model_path}")
