@@ -115,14 +115,14 @@ class FeatureExtractor:
 class DQNAgent:
     def __init__(
         self,
-        n_actions,
         feature_dim,
         lr=3e-4,
         epsilon_decay=0.9995,
         epsilon_min=0.1,
         batch=32,
     ):
-        self.n_actions = n_actions
+        self.actions = np.arange(45, 110, 2).tolist()
+        self.n_actions = len(self.actions)
         self.epsilon = 1.0
         self.epsilon_decay = epsilon_decay
         self.epsilon_min = epsilon_min
@@ -220,8 +220,6 @@ def train(
             greedy_idx = int(np.flatnonzero(q == q.max())[-1])
             stopping = actions[action_idx]
 
-            key = (file, stopping)
-
             # Baseline greedy (no stopping)
             greedy_full = greedy_qkp(w, p, Q, cap, None)
             greedy_profit = compute_profit(greedy_full, p, Q)
@@ -230,28 +228,32 @@ def train(
             status = None
             obj = greedy_profit
 
-            if key in rilp_cache:
-                obj, status, true_reward, reward = rilp_cache[key]
-            else:
-                # Greedy with stopping threshold
-                greedy_sel = greedy_qkp(w, p, Q, cap, stopping)
+            # Greedy with stopping threshold
+            greedy_sel = greedy_qkp(w, p, Q, cap, stopping)
 
-                remaining = cap - sum(w[i] for i in greedy_sel)
-                candidates = [
-                    i for i in range(n) if i not in greedy_sel and w[i] <= remaining
-                ]
-                if not candidates:
-                    reward = -2.0
-                    obj = greedy_profit
-                    true_reward = 0.0
-                    td_error = 0.0
-                    reward = -2.0
-                else:
+            remaining = cap - sum(w[i] for i in greedy_sel)
+            candidates = [
+                i for i in range(n) if i not in greedy_sel and w[i] <= remaining
+            ]
+            key = (tuple(sorted(greedy_sel)), stopping)
+            if not candidates:
+                reward = -2.0
+                obj = greedy_profit
+                true_reward = 0.0
+                td_error = 0.0
+                reward = -2.0
+                # selected_items = greedy_sel
+            else:
+                if key not in rilp_cache:
                     start = time.time()
-                    obj, _, status = solve_reduced_ilp(w, p, Q, cap, greedy_sel)
+                    obj, q_selected, status = solve_reduced_ilp(w, p, Q, cap, greedy_sel)
+                    q_selected = [i for i, val in q_selected.items() if val > 0.5]
+                    q_selected = set(q_selected)
                     true_reward = (obj / greedy_profit) - 1.0
                     reward = true_reward * 15.0
                     end = time.time()
+                    elapsed = end - start
+
                     if status == GRB.Status.TIME_LIMIT:
                         reward -= 0.5
                     elif status == GRB.Status.INFEASIBLE:
@@ -260,8 +262,15 @@ def train(
                         reward += 0.25 * ((end - start) / 15.0)
                     reward = np.clip(reward, agent.q_min, agent.q_max)
                     td_error = abs(q_sa - reward)
-
-                rilp_cache[key] = (obj, status, true_reward, reward)
+                    rilp_cache[key] = (
+                        obj,
+                        true_reward,
+                        reward,
+                        q_selected,
+                        td_error,
+                    )
+                else:
+                    obj, true_reward, reward, q_selected, td_error = rilp_cache[key]
 
             # add batch sample
             agent.replay.add(state.squeeze(), action_idx, float(reward))
@@ -341,10 +350,9 @@ if __name__ == "__main__":
 
     extractor = FeatureExtractor()
     agent = DQNAgent(
-        n_actions=len(actions),
         feature_dim=extractor.feature_dim,
         lr=3e-4,
-        epsilon_decay=0.9975,
+        epsilon_decay=0.999,
         epsilon_min=0.05,
     )
 
