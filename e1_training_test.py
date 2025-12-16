@@ -229,9 +229,11 @@ def train(
                     if status == GRB.Status.TIME_LIMIT:
                         reward -= 0.5
                     elif status == GRB.Status.INFEASIBLE:
-                        reward -= -2.0
+                        reward -= 2.0
                     elif status == GRB.Status.OPTIMAL:
                         reward += 0.25 * ((end - start) / 15.0)
+                    reward = np.clip(reward, agent.q_min, agent.q_max)
+
                 rilp_cache[key] = (obj, status, reward)
 
             # Calculate true predicted reward
@@ -290,7 +292,7 @@ def train(
             f.flush()
 
             # Store model every 500 episodes
-            if (ep + 1) % 500 == 0:
+            if (ep + 1) % 250 == 0:
                 model_path = os.path.join(store_dir, f"dqn_model_ep{ep + 1}.keras")
                 agent.model.save(model_path)
                 print(f"Saved model to: {model_path}")
@@ -315,7 +317,7 @@ if __name__ == "__main__":
 
     # Train settings
     store_dir = "exc_1_results_new"
-    n_episodes = 5000
+    n_episodes = 4000
     batch_size = 32
 
     extractor = FeatureExtractor()
