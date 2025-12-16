@@ -29,12 +29,12 @@ def run_hyperheuristic(instance_file, instance_id):
     with open(instance_file, "r") as f:
         n, cap, w, q = read_instance(instance_file)
     p = [q[i][i] for i in range(n)]
-    env = QEnv(w, p, q, cap, instance_id=instance_id)
+    env = DeepQEnv(w, p, q, cap, instance_id=instance_id)
 
     # Load model
-    loaded_agent = load_agent("exc_2_model/test_model.keras", env)
-    # Evaluate agent on instance
-    _, profit, _ = loaded_agent.evaluate(env)
+    agent = DeepQAgent.load_model("exc_2_model/dqn_qkp_model_ep3000.keras")
+
+    profit = agent.evaluate(env)
 
     return profit
 
@@ -43,6 +43,8 @@ def run_hyperheuristic(instance_file, instance_id):
 # Evaluate the subset of 20 instances and print the results in a file
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
+    from e2_training_q import DeepQEnv, DeepQAgent
+
     NUM_INSTANCES = 10
     RESULTS_FILE = "results2.txt"
 

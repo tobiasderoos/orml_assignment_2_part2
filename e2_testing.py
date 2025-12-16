@@ -55,7 +55,7 @@ if __name__ == "__main__":
         if fname.endswith(".txt")
     ]
     # Load Keras mode
-    model = DeepQAgent.load_model("exc_2_model/dqn_qkp_model_ep4000.keras")
+    model = DeepQAgent.load_model("exc_2_model/dqn_qkp_model_ep3000.keras")
 
     envs = []
 
