@@ -117,11 +117,16 @@ class DQNAgent:
         inp = layers.Input(shape=(dim,))
         x = layers.BatchNormalization()(inp)
         x = layers.Dense(128, activation="relu")(x)
+        x = layers.Dropout(0.1)(x)
         x = layers.Dense(64, activation="relu")(x)
-        out = layers.Dense(self.n_actions)(x)
+        out = layers.Dense(self.n_actions, activation="linear")(x)
 
-        model = models.Model(inp, out)
-        model.compile(optimizer=optimizers.Adam(self.lr), loss="huber")
+        model = models.Model(inputs=inp, outputs=out)
+        model.compile(
+            optimizer=optimizers.Adam(self.lr, clipnorm=1.0),
+            loss="huber",
+        )
+        print(model.summary())
         return model
 
     def act(self, state, train=True):
@@ -301,7 +306,7 @@ if __name__ == "__main__":
         n_actions=len(actions),
         feature_dim=extractor.feature_dim,
         lr=3e-4,
-        epsilon_decay=0.995,
+        epsilon_decay=0.999,
         epsilon_min=0.05,
     )
 
