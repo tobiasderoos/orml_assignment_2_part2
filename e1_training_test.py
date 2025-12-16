@@ -134,7 +134,7 @@ class DQNAgent:
         self.model = self._build_model(feature_dim)
 
         self.replay = ReplayBuffer(capacity=30000)
-        self.warm_up = 250
+        self.warm_up = 40
 
     def _build_model(self, dim):
         inp = layers.Input(shape=(dim,))
@@ -142,7 +142,7 @@ class DQNAgent:
         x = layers.Dense(128, activation="relu")(x)
         x = layers.Dropout(0.1)(x)
         x = layers.Dense(64, activation="relu")(x)
-        out = layers.Dense(self.n_actions, activation="linear")(x)
+        out = layers.Dense(self.n_actions, activation="softmax")(x)
 
         model = models.Model(inputs=inp, outputs=out)
         model.compile(
@@ -214,6 +214,12 @@ def train(
             p = [Q[i][i] for i in range(n)]
 
             state = extractor.extract(n, w, p, Q, cap)
+
+            max_abs_feat = float(np.max(np.abs(state)))
+            writer.add_scalar("Features/MaxAbs", max_abs_feat, ep)
+            writer.add_scalar("Features/MeanAbs", float(np.mean(np.abs(state))), ep)
+            writer.add_scalar("Features/Std", float(np.std(state)), ep)
+
             action_idx, q = agent.act(state)
             q_sa = q[action_idx]
 
@@ -281,8 +287,9 @@ def train(
                 states, actions_b, rewards_b = agent.replay.sample(batch_size)
 
                 q_preds = agent.model.predict(states, verbose=0)
+                targets = q_preds.copy()
                 for i, a in enumerate(actions_b):
-                    q_preds[i, a] = rewards_b[i]
+                    targets[i, a] = rewards_b[i]
 
                 loss = agent.model.train_on_batch(states, q_preds)
                 writer.add_scalar("Loss", loss, ep)

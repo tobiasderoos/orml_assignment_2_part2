@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 
 
 def compute_profit(S, profits, quad_profits):
@@ -53,8 +54,8 @@ if __name__ == "__main__":
         for fname in os.listdir(folder)
         if fname.endswith(".txt")
     ]
-    # Load Keras model
-    model = DeepQAgent.load_model("exc_2_model_luffy/dqn_qkp_model.keras")
+    # Load Keras mode
+    model = DeepQAgent.load_model("exc_2_model/dqn_qkp_model_ep4000.keras")
 
     envs = []
 
