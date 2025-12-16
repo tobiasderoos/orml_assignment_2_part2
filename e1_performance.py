@@ -16,36 +16,40 @@ def read_instance(filename):
 # ---------------------------------------------------------------------
 # Run the hyper-heuristic -- here something trivial
 # ---------------------------------------------------------------------
-def run_hyperheuristic(instance_file, agent):
+def run_hyperheuristic(instance_file, agent, env_creator):
     n, c, w, p = read_instance(instance_file)
     profits = [p[i][i] for i in range(n)]
-    rl_result = agent.evaluate_instance(n, c, w, p)
 
-    return rl_result["rilp_profit"]
+    env = fe.extract(n, weights, profits, p, c)
+    idx, _ = agent.act(env, train=False)
+    stopping = agent.actions[idx]
+
+    sel = greedy_qkp(w, profits, p, c, stopping_criterion=stopping)
+    rl_profit, _, _ = solve_reduced_ilp(w, profits, p, c, sel)
+
+    return rl_profit
 
 
 # ---------------------------------------------------------------------
 # Evaluate the subset of 20 instances and print the results in a file
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
-    from e1_training import QLearning
+    from e1_training import DQNAgent, FeatureExtractor
+    from e1_testing import solve_reduced_ilp, greedy_qkp
 
     NUM_INSTANCES = 20
     RESULTS_FILE = "results1.txt"
 
     # Initialize agent
-    agent = QLearning(
-        instance_files=[],  # leave empty, won't train here
-        reset_params=False,  # don't reset parameters
-        model_name="exc_1_model/qkeras_model",
-    )
+    fe = FeatureExtractor()
+    agent = DQNAgent(feature_dim=fe.feature_dim)
     all_results = []
 
     results = []
 
     for i in range(NUM_INSTANCES):
         instance_file = f"InstancesEx1/instance{i}.txt"
-        value = run_hyperheuristic(instance_file, agent)
+        value = run_hyperheuristic(instance_file, agent, fe)
         results.append(value)
 
     with open(RESULTS_FILE, "w") as f:
