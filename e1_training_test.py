@@ -1,0 +1,279 @@
+import os
+import yaml
+import pickle
+import random
+import csv
+import shutil
+import tqdm
+import time
+import numpy as np
+import matplotlib.pyplot as plt
+from collections import defaultdict
+
+from scipy.stats import skew
+from scipy.stats import kendalltau
+from datetime import datetime
+from gurobipy import GRB
+from torch.utils.tensorboard import SummaryWriter
+
+import tensorflow as tf
+from tensorflow.keras import layers, models, optimizers
+
+from collections import deque
+
+from e1_testing import (
+    greedy_qkp,
+    compute_profit,
+    solve_reduced_ilp,
+)
+
+
+class FeatureExtractor:
+    def __init__(self):
+        self.feature_dim = 11
+
+    def extract(self, n, weights, profits, quad, capacity):
+        w = np.array(weights, dtype=np.float32)
+        p = np.array(profits, dtype=np.float32)
+        Q = np.array(quad, dtype=np.float32)
+
+        pw = p / w
+        pw_mean = pw.mean()
+        pw_std = pw.std()
+        pw_cv = pw_std / pw_mean
+        pw_skew = skew(pw)
+        # gini_pw = self._gini(pw)
+
+        pw_iw_corr = np.corrcoef(p, w)[0, 1]
+
+        sorted_idx = np.argsort(pw)[::-1]
+        cum_w = np.cumsum(w[sorted_idx])
+        m = int(np.searchsorted(cum_w, capacity, side="right"))
+        fit_ratio = m / n
+        cap_tight = capacity / w.mean()
+
+        pw_sorted = np.sort(pw)[::-1][:m]
+        deltas = pw_sorted[:-1] - pw_sorted[1:]
+
+        delta_mean = deltas.mean()
+        delta_median = np.median(deltas)
+        delta_std = deltas.std()
+        delta_cv = delta_std / delta_mean if delta_mean != 0 else 0.0
+        delta_skew = skew(deltas)
+
+        greedy_items = sorted_idx[:m]
+        quad_inc = []
+        for t in range(1, m):
+            i = greedy_items[t]
+            quad_inc.append(Q[i, greedy_items[:t]].sum() / t)
+
+        quad_inc = np.array(quad_inc)
+        quad_corr = np.corrcoef(deltas, quad_inc)[0, 1]
+        quad_skew = skew(quad_inc)
+
+        feats = np.array(
+            [
+                delta_mean,
+                delta_median,
+                delta_cv,
+                delta_skew,
+                pw_cv,
+                pw_skew,
+                pw_iw_corr,
+                cap_tight,
+                fit_ratio,
+                quad_corr,
+                quad_skew,
+            ],
+            dtype=np.float32,
+        )
+
+        return feats.reshape(1, -1)
+
+    def _gini(self, x):
+        x = np.sort(x)
+        n = len(x)
+        return (2 * np.sum((np.arange(1, n + 1)) * x)) / (n * x.sum()) - (n + 1) / n
+
+
+class DQNAgent:
+    def __init__(
+        self,
+        n_actions,
+        feature_dim,
+        lr=3e-4,
+        epsilon_decay=0.999,
+        epsilon_min=0.1,
+        batch=32,
+    ):
+        self.n_actions = n_actions
+        self.epsilon = 1.0
+        self.epsilon_decay = epsilon_decay
+        self.epsilon_min = epsilon_min
+
+        self.batch_size = batch
+
+        self.q_min, self.q_max = -5.0, 10.0
+        self.model = self._build_model(feature_dim)
+        self.lr = lr
+
+    def _build_model(self, dim):
+        inp = layers.Input(shape=(dim,))
+        x = layers.BatchNormalization()(inp)
+        x = layers.Dense(128, activation="relu")(x)
+        x = layers.Dense(64, activation="relu")(x)
+        out = layers.Dense(self.n_actions)(x)
+
+        model = models.Model(inp, out)
+        model.compile(optimizer=optimizers.Adam(self.lr), loss="huber")
+        return model
+
+    def act(self, state):
+        q = self.model.predict(state, verbose=0).flatten()
+        greedy = np.random.choice(np.flatnonzero(q == q.max()))
+
+        if np.random.rand() < self.epsilon:
+            return np.random.randint(self.n_actions), q
+        return greedy, q
+
+    def decay_epsilon(self):
+        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+
+
+def train(
+    agent,
+    extractor,
+    instance_files,
+    actions,
+    writer,
+    episodes,
+    batch_size=32,
+    store_dir="exc_1_model_new",
+):
+    os.makedirs(store_dir, exist_ok=True)
+    csv_path = os.path.join(store_dir, "train_results.csv")
+    with open(csv_path, "w", newline="") as f:
+        csv_writer = csv.writer(f)
+        csv_writer.writerow(
+            [
+                "episode",
+                "instance",
+                "loss",
+                "epsilon",
+                "reward",
+                "action",
+                "greedy_action",
+                "q_range",
+            ]
+        )
+
+        for ep in tqdm.tqdm(range(n_episodes)):
+            file = random.choice(instance_files)
+            n, cap, w, Q = read_instance(file)
+            p = [Q[i][i] for i in range(n)]
+
+            state = extractor.extract(n, w, p, Q, cap)
+            action_idx, q = agent.act(state)
+            greedy_idx = int(np.argmax(q))
+            stopping = actions[action_idx]
+
+            # Baseline greedy (no stopping)
+            greedy_full = greedy_qkp(w, p, Q, cap, None)
+            greedy_profit = compute_profit(greedy_full, p, Q)
+
+            # Greedy with stopping threshold
+            greedy_sel = greedy_qkp(w, p, Q, cap, stopping)
+
+            remaining = cap - sum(w[i] for i in greedy_sel)
+            candidates = [
+                i for i in range(n) if i not in greedy_sel and w[i] <= remaining
+            ]
+
+            if not candidates:
+                reward = -2.0
+            else:
+                start = time.time()
+                obj, _, _status = solve_reduced_ilp(w, p, Q, cap, greedy_sel)
+                reward = ((obj / greedy_profit) - 1.0) * 15.0 if obj is not None else -2.0
+                end = time.time()
+                if status == GRB.Status.TIME_LIMIT:
+                    reward -= 0.5
+                elif status == GRB.Status.INFEASIBLE:
+                    reward -= -2.0
+                elif status == GRB.Status.OPTIMAL:
+                    reward += 0.25 * ((end - start) / 15.0)
+
+            # collect batch sample
+            batch_states.append(state.squeeze())
+            batch_actions.append(action_idx)
+            batch_rewards.append(float(reward))
+
+            # logging per episode
+            q_range = float(q.max() - q.min())
+            writer.add_scalar("Reward", reward, ep)
+            writer.add_scalar("QRange", q_range, ep)
+            writer.add_scalar("Epsilon", agent.epsilon, ep)
+            csv_writer.writerow(
+                [ep, file, agent.epsilon, reward, action_idx, greedy_idx, q_range]
+            )
+
+            # when batch full: do one supervised-style update
+            if len(batch_states) >= batch_size:
+                states = np.array(batch_states, dtype=np.float32)
+                q_preds = agent.model.predict(states, verbose=0)
+
+                for i, a in enumerate(batch_actions):
+                    q_preds[i, a] = batch_rewards[i]
+
+                agent.model.train_on_batch(states, q_preds)
+
+                batch_states, batch_actions, batch_rewards = [], [], []
+
+            # epsilon decay per episode
+            agent.decay_epsilon()
+
+    writer.close()
+
+
+if __name__ == "__main__":
+    # Instances folder
+    instance_dir = "InstancesEx1_train_new"
+    instance_files = [
+        os.path.join(instance_dir, f)
+        for f in os.listdir(instance_dir)
+        if f.endswith(".pkl")
+    ]
+    # Actions (thresholds)
+    actions = np.arange(45, 110, 2).tolist()
+
+    # Train settings
+    store_dir = "exc_1_results_new"
+    n_episodes = 5000
+    batch_size = 32
+
+    extractor = FeatureExtractor()
+    agent = DQNAgent(
+        n_actions=len(actions),
+        feature_dim=extractor.feature_dim,
+        lr=3e-4,
+        epsilon_decay=0.995,
+        epsilon_min=0.05,
+    )
+
+    log_dir = os.path.join(store_dir, "logs", datetime.now().strftime("%Y%m%d-%H%M%S"))
+    writer = SummaryWriter(log_dir)
+
+    train(
+        agent=agent,
+        extractor=extractor,
+        instance_files=instance_files,
+        actions=actions,
+        writer=writer,
+        n_episodes=n_episodes,
+        batch_size=batch_size,
+        store_dir=store_dir,
+    )
+
+    model_path = os.path.join(store_dir, "dqn_model.keras")
+    agent.model.save(model_path)
+    print(f"Saved model to: {model_path}")
