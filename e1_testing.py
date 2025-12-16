@@ -230,17 +230,14 @@ def solve_q(weights, profits, quad, capacity, fixed_items, q_table, state):
 # Run script to compare greedy, ILP, reduced ILP, and RL
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
-    from e1_training import QLearning
+    from e1_training import DQNAgent, FeatureExtractor
     import pandas as pd
     import random
     import time
     from tqdm import tqdm
 
-    agent = QLearning(
-        instance_files=[],
-        reset_params=False,
-        model_name="exc_1_model_final/qkeras_model",
-    )
+    fe = FeatureExtractor()
+    agent = DQNAgent(feature_dim=fe.feature_dim)
     all_results = []
 
     for dataset in ["train", "test"]:
@@ -275,11 +272,13 @@ if __name__ == "__main__":
             # RL reduced ILP
             # ---------------------------
             t0 = time.time()
-            rl_result = agent.evaluate_instance(n, cap, weights, quad)
-            rl_time = time.time() - t0
+            env = fe.extract(n, weights, profits, quad, cap)
+            idx, _ = agent.act(env, train=False)
+            stopping = agent.actions[idx]
 
-            rl_profit = rl_result["rilp_profit"]
-            rl_stopping = rl_result["chosen_threshold"]
+            sel = greedy_qkp(weights, profits, quad, cap, stopping_criterion=stopping)
+            rl_profit, _, _ = solve_reduced_ilp(weights, profits, quad, cap, sel)
+            rl_time = time.time() - t0
 
             # Calculate relative improvements
             rel_improvement_greedy = (rl_profit - greedy_profit) / greedy_profit * 100
@@ -307,7 +306,7 @@ if __name__ == "__main__":
                     "greedy_time": greedy_time,
                     "ilp_time": ilp_time,
                     "rl_time": rl_time,
-                    "rl_stopping": rl_stopping,
+                    "rl_stopping": stopping,
                 }
             )
     df = pd.DataFrame(all_results)
