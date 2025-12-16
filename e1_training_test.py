@@ -19,13 +19,13 @@ from torch.utils.tensorboard import SummaryWriter
 import tensorflow as tf
 from tensorflow.keras import layers, models, optimizers
 
-from collections import deque
-
 from e1_testing import (
     greedy_qkp,
     compute_profit,
     solve_reduced_ilp,
 )
+
+from e2_performanceEx2 import read_instance
 
 
 class FeatureExtractor:
@@ -110,12 +110,12 @@ class DQNAgent:
         self.epsilon = 1.0
         self.epsilon_decay = epsilon_decay
         self.epsilon_min = epsilon_min
+        self.lr = lr
 
         self.batch_size = batch
 
         self.q_min, self.q_max = -5.0, 10.0
         self.model = self._build_model(feature_dim)
-        self.lr = lr
 
     def _build_model(self, dim):
         inp = layers.Input(shape=(dim,))
@@ -128,13 +128,21 @@ class DQNAgent:
         model.compile(optimizer=optimizers.Adam(self.lr), loss="huber")
         return model
 
-    def act(self, state):
+    def act(self, state, train=True):
         q = self.model.predict(state, verbose=0).flatten()
-        greedy = np.random.choice(np.flatnonzero(q == q.max()))
 
-        if np.random.rand() < self.epsilon:
-            return np.random.randint(self.n_actions), q
-        return greedy, q
+        # TRAIN MODE
+        if train:
+            if np.random.rand() < self.epsilon:
+                return np.random.randint(self.n_actions), q
+            # random tie-break
+            greedy = np.random.choice(np.flatnonzero(q == q.max()))
+            return greedy, q
+
+        else:
+            # deterministic: last index of max Q
+            greedy = np.flatnonzero(q == q.max())[-1]
+            return greedy, q
 
     def decay_epsilon(self):
         self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
@@ -146,7 +154,7 @@ def train(
     instance_files,
     actions,
     writer,
-    episodes,
+    n_episodes=5000,
     batch_size=32,
     store_dir="exc_1_model_new",
 ):
@@ -166,6 +174,7 @@ def train(
                 "q_range",
             ]
         )
+        batch_states, batch_actions, batch_rewards = [], [], []
 
         for ep in tqdm.tqdm(range(n_episodes)):
             file = random.choice(instance_files)
@@ -193,7 +202,7 @@ def train(
                 reward = -2.0
             else:
                 start = time.time()
-                obj, _, _status = solve_reduced_ilp(w, p, Q, cap, greedy_sel)
+                obj, _, status = solve_reduced_ilp(w, p, Q, cap, greedy_sel)
                 reward = ((obj / greedy_profit) - 1.0) * 15.0 if obj is not None else -2.0
                 end = time.time()
                 if status == GRB.Status.TIME_LIMIT:
@@ -213,11 +222,7 @@ def train(
             writer.add_scalar("Reward", reward, ep)
             writer.add_scalar("QRange", q_range, ep)
             writer.add_scalar("Epsilon", agent.epsilon, ep)
-            csv_writer.writerow(
-                [ep, file, agent.epsilon, reward, action_idx, greedy_idx, q_range]
-            )
-
-            # when batch full: do one supervised-style update
+            # when batch full, train
             if len(batch_states) >= batch_size:
                 states = np.array(batch_states, dtype=np.float32)
                 q_preds = agent.model.predict(states, verbose=0)
@@ -225,12 +230,22 @@ def train(
                 for i, a in enumerate(batch_actions):
                     q_preds[i, a] = batch_rewards[i]
 
-                agent.model.train_on_batch(states, q_preds)
+                loss = agent.model.train_on_batch(states, q_preds)
+                writer.add_scalar("Loss", loss, ep)
+                csv_writer.writerow(
+                    [ep, file, agent.epsilon, reward, action_idx, greedy_idx, q_range]
+                )
 
                 batch_states, batch_actions, batch_rewards = [], [], []
 
             # epsilon decay per episode
             agent.decay_epsilon()
+
+            # Store model every 500 episodes
+            if (ep + 1) % 500 == 0:
+                model_path = os.path.join(store_dir, f"dqn_model_ep{ep + 1}.keras")
+                agent.model.save(model_path)
+                print(f"Saved model to: {model_path}")
 
     writer.close()
 
@@ -239,16 +254,17 @@ if __name__ == "__main__":
     # Instances folder
     instance_dir = "InstancesEx1_train_new"
     instance_files = [
-        os.path.join(instance_dir, f)
-        for f in os.listdir(instance_dir)
-        if f.endswith(".pkl")
+        os.path.join(instance_dir, fname)
+        for fname in os.listdir(instance_dir)
+        if fname.endswith(".txt")
     ]
+
     # Actions (thresholds)
     actions = np.arange(45, 110, 2).tolist()
 
     # Train settings
     store_dir = "exc_1_results_new"
-    n_episodes = 5000
+    n_episodes = 10000
     batch_size = 32
 
     extractor = FeatureExtractor()
