@@ -19,7 +19,7 @@ import tqdm
 
 instance_folder = f"InstancesEx1_train/"
 instance_files = sorted([f for f in os.listdir(instance_folder) if f.endswith(".txt")])
-instance_files = instance_files[:50]
+instance_files = instance_files[:25]
 
 # Store all gaps
 all_gaps = []

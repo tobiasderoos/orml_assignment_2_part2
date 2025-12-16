@@ -239,7 +239,7 @@ if __name__ == "__main__":
     agent = QLearning(
         instance_files=[],
         reset_params=False,
-        model_name="exc_1_model/qkeras_model",
+        model_name="exc_1_model_final/qkeras_model",
     )
     all_results = []
 
@@ -298,6 +298,7 @@ if __name__ == "__main__":
                     "greedy_profit": greedy_profit,
                     "rl_profit": rl_profit,
                     "ilp_profit": ilp_profit,
+                    "ilp_status": ilp_status,
                     "rel_improvement_greedy": round(rel_improvement_greedy, 2),
                     "rel_improvement_full": round(rel_improvement_full, 2)
                     if ilp_profit is not None
@@ -309,7 +310,55 @@ if __name__ == "__main__":
                     "rl_stopping": rl_stopping,
                 }
             )
-    df_results = pd.DataFrame(all_results)
+    df = pd.DataFrame(all_results)
     print("\n--- SUMMARY RESULTS ---\n")
-    print(df_results)
-    df_results.to_csv("exc_1_results/train_test_results.csv", index=False)
+    print(df)
+    df.to_csv("exc_1_results/train_test_results.csv", index=False)
+    df = df_results
+    # df = pd.read_csv("exc_1_results/train_test_results.csv")
+    ilp_counts = (
+        df.groupby("dataset")["ilp_status"].value_counts().rename("count").reset_index()
+    )
+    rlp_counts = (
+        df.groupby("dataset")["rl_stopping"].value_counts().rename("count").reset_index()
+    )
+
+    improvement_table = (
+        df.groupby("dataset")
+        .agg(
+            # vs Greedy
+            greedy_mean=("rel_improvement_greedy", "mean"),
+            greedy_std=("rel_improvement_greedy", "std"),
+            greedy_min=("rel_improvement_greedy", "min"),
+            greedy_max=("rel_improvement_greedy", "max"),
+            # vs ILP
+            ilp_mean=("rel_improvement_full", "mean"),
+            ilp_std=("rel_improvement_full", "std"),
+            ilp_min=("rel_improvement_full", "min"),
+            ilp_max=("rel_improvement_full", "max"),
+        )
+        .round(2)
+    )
+
+    print("\nImprovements vs Greedy and ILP (%):")
+    print(improvement_table)
+
+    # Speedup factor
+    df["speedup_vs_ilp"] = df["ilp_time"] / df["rl_time"]
+
+    runtime_table = (
+        df.groupby("dataset")
+        .agg(
+            rl_time_mean=("rl_time", "mean"),
+            rl_time_std=("rl_time", "std"),
+            ilp_time_mean=("ilp_time", "mean"),
+            ilp_time_std=("ilp_time", "std"),
+            speedup_mean=("speedup_vs_ilp", "mean"),
+            speedup_min=("speedup_vs_ilp", "min"),
+            speedup_max=("speedup_vs_ilp", "max"),
+        )
+        .round(2)
+    )
+
+    print("\nRuntime comparison and speedup:")
+    print(runtime_table)
